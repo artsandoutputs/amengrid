@@ -165,3 +165,170 @@ Backend
 	•	Social sharing
 	•	Licensing enforcement beyond disclaimer
 	•	Mobile UI optimization
+
+
+## System Architecture & Phases	
+
+Phase 1: Audio Ingest Stack
+	Purpose
+
+	Phase 1 defines the Audio Ingest Stack, a foundational system responsible for accepting user-provided media and producing a canonical audio asset that all downstream phases depend on.
+
+	This phase establishes a hard boundary in the system:
+	all analysis, slicing, patterning, and playback features operate only on the outputs of this stack and never on raw user media.
+
+	Scope
+
+	Phase 1 includes:
+
+	User-facing upload UI with legal disclaimer
+
+	Server-side media validation and storage
+
+	Media conversion and normalization into a canonical WAV format
+
+	Stable ID-based asset referencing
+
+	Phase 1 explicitly does not include:
+
+	BPM detection or musical analysis
+
+	Loop detection or bar segmentation
+
+	Audio slicing or rearrangement
+
+	Pattern playback or performance controls
+
+	Export or sharing features
+
+	Inputs
+
+	Supported input sources:
+
+	Direct user uploads (audio or video files)
+
+	(Planned) YouTube imports via URL (behind legal disclaimer and explicit user confirmation of rights)
+
+	Supported media types may include:
+
+	Audio: MP3, WAV, AIFF, FLAC, M4A
+
+	Video: MP4, MOV (audio track extracted)
+
+	All inputs must pass validation before processing.
+
+	Legal & Disclaimer Requirements
+
+	Before upload or import, the user must explicitly confirm:
+
+	They own the content or
+
+	They have legal rights to use and process the content
+
+	This confirmation is required per session and is enforced at the UI layer.
+
+	Processing Guarantees (Canonical Output)
+
+	Every successful ingest operation produces exactly one canonical audio asset with the following guarantees:
+
+	Format: WAV
+
+	Codec: PCM 16-bit (pcm_s16le)
+
+	Sample Rate: 44.1 kHz
+
+	Channels: Mono (1 channel)
+
+	This canonical WAV is the only audio format used by Phases 2+.
+
+	Storage Model
+
+	Phase 1 defines a fixed storage layout:
+
+	storage/original/<id>.<ext>
+	Original uploaded or extracted media (unchanged)
+
+	storage/converted/<id>.wav
+	Canonical WAV produced by Phase 1
+
+	Where <id> is a globally unique identifier (UUID) generated at ingest time.
+
+	API Contract
+	Upload Endpoint
+
+	POST /api/upload
+
+	Input
+
+	multipart/form-data
+
+	File field name: file
+
+	Validation
+
+	Maximum file size enforced
+
+	Empty or invalid files rejected
+
+	Unsupported formats rejected
+
+	Response
+
+	{
+	"id": "<uuid>",
+	"original": {
+		"path": "storage/original/<id>.<ext>",
+		"mime": "<mime-type>",
+		"size": <bytes>
+	},
+	"converted": {
+		"path": "storage/converted/<id>.wav",
+		"format": "wav",
+		"sampleRate": 44100,
+		"bitDepth": 16,
+		"channels": 1
+	}
+	}
+
+
+	This response constitutes the ingest contract for all downstream phases.
+
+	Phase Boundary Rules
+
+	All downstream phases (analysis, slicing, pattern playback, export) must reference audio assets by id.
+
+	No downstream phase may:
+
+	Accept raw media files
+
+	Re-run format conversion
+
+	Modify or replace the canonical WAV
+
+	Any feature requiring audio input must first pass through Phase 1.
+
+	Rationale
+
+	Separating audio ingest into its own stack:
+
+	Simplifies downstream feature development
+
+	Ensures consistent audio quality and format
+
+	Prevents duplicated conversion logic
+
+	Enables future reuse (desktop app, batch processing, cloud scaling)
+
+	Phase 1 is designed to be stable, minimal, and reusable, forming the backbone of the AmenGrid system.
+
+	Completion Criteria
+
+	Phase 1 is considered complete when:
+
+	Users can upload supported media
+
+	A canonical WAV is reliably produced
+
+	The ingest API returns a stable ID and metadata
+
+	Downstream phases can operate solely on the converted WAV using the ID

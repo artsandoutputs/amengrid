@@ -1,0 +1,14 @@
+{
+  "name": "amengrid",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs"
+  },
+  "overrides": {
+    "esbuild": "0.17.19"
+  }
+
+}

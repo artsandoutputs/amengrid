@@ -1,2 +1,25 @@
 .DS_Store
-.DS_Store
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vscode/
+.idea/
+
+# Next.js
+apps/web/.next/
+apps/web/out/
+
+# Server storage and temp files
+apps/server/storage/
+apps/server/tmp/
+
+# Build outputs
+dist/
+build/
+
+# Env files
+.env
+.env.local
+.env.*.local
