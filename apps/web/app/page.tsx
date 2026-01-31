@@ -211,6 +211,7 @@ export default function Home() {
   const loopSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const transportRef = useRef<TransportState | null>(null);
   const scheduledSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const sourceEndTimesRef = useRef<Array<{ source: AudioBufferSourceNode; gain: GainNode; endTime: number }>>([]);
   const schedulerRef = useRef<number | null>(null);
   const isPlayingRef = useRef(false);
   const repeatHoldIndexRef = useRef<number | null>(null);
@@ -759,6 +760,18 @@ export default function Home() {
       }
       scheduledSourcesRef.current = [];
     }
+    if (sourceEndTimesRef.current.length > 0) {
+      for (const { source, gain } of sourceEndTimesRef.current) {
+        try {
+          source.stop();
+          source.disconnect();
+          gain.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+      sourceEndTimesRef.current = [];
+    }
     isPlayingRef.current = false;
     transportRef.current = null;
     setIsPlaying(false);
@@ -827,6 +840,20 @@ export default function Home() {
       const transport = transportRef.current;
       if (!transport || !isPlayingRef.current) return;
       const now = ctx.currentTime;
+
+      // Clean up finished audio sources and gain nodes
+      sourceEndTimesRef.current = sourceEndTimesRef.current.filter(({ source, gain, endTime }) => {
+        if (now >= endTime) {
+          try {
+            source.disconnect();
+            gain.disconnect();
+          } catch {
+            // ignore
+          }
+          return false;
+        }
+        return true;
+      });
       let loopBoundaryTime: number | null = null;
       if (transport.queuedLoop) {
         const currentStep = Math.floor((now - transport.startTime) / transport.playbackStepDuration);
@@ -957,7 +984,9 @@ export default function Home() {
         if (transport.activeFillId && transport.fillStepsRemaining !== null && transport.fillStepIndex !== null) {
           const barsInLoop = Math.max(1, Math.round(transport.baseTotalSteps / BASE_STEPS_PER_BAR));
           const barOffset = Math.min(1, barsInLoop - 1) * BASE_STEPS_PER_BAR;
-          const fillSteps = resolveFillOffsets(activeSteps, 16);
+          const currentBar = Math.floor(transport.fillStepIndex / transport.stepsPerBar);
+          const barStart = (currentBar % 2 === 0 ? 0 : 16) as 0 | 16;
+          const fillSteps = resolveFillOffsets(activeSteps, barStart);
           const baseIndex = Math.floor(
             (transport.fillStepIndex / transport.stepsPerBar) * BASE_STEPS_PER_BAR
           );
@@ -1012,26 +1041,31 @@ export default function Home() {
         for (let sub = 0; sub < subCount; sub += 1) {
           const subStart = when + sub * subDur;
           const subEnd = subStart + subDur;
-          const source = ctx.createBufferSource();
-          const gain = ctx.createGain();
-          source.buffer = fullBuffer;
-          source.connect(gain);
-          gain.connect(ctx.destination);
+          try {
+            const source = ctx.createBufferSource();
+            const gain = ctx.createGain();
+            source.buffer = fullBuffer;
+            source.connect(gain);
+            gain.connect(ctx.destination);
 
-          if (gaplessEnabled) {
-            const fadeOut = Math.min(0.008, subDur * 0.25);
-            gain.gain.setValueAtTime(gainScale, subStart);
-            if (fadeOut > 0) {
-              gain.gain.setValueAtTime(gainScale, subEnd - fadeOut);
-              gain.gain.linearRampToValueAtTime(0, subEnd);
+            if (gaplessEnabled) {
+              const fadeOut = Math.min(0.008, subDur * 0.25);
+              gain.gain.setValueAtTime(gainScale, subStart);
+              if (fadeOut > 0) {
+                gain.gain.setValueAtTime(gainScale, subEnd - fadeOut);
+                gain.gain.linearRampToValueAtTime(0, subEnd);
+              }
+            } else {
+              gain.gain.setValueAtTime(gainScale, subStart);
             }
-          } else {
-            gain.gain.setValueAtTime(gainScale, subStart);
-          }
 
-          source.start(subStart, offset, subDur);
-          source.stop(subEnd + 0.01);
-          scheduledSourcesRef.current.push(source);
+            source.start(subStart, offset, subDur);
+            source.stop(subEnd + 0.01);
+            scheduledSourcesRef.current.push(source);
+            sourceEndTimesRef.current.push({ source, gain, endTime: subEnd + 0.01 });
+          } catch (error) {
+            console.error("Failed to schedule audio source:", error);
+          }
         }
       }
     };
@@ -1152,9 +1186,7 @@ export default function Home() {
     const tick = () => {
       if (loopPlayback && audioRef.current.ctx) {
         const duration = loopPlayback.endSec - loopPlayback.startSec;
-        if (duration > 0) {
-          const elapsed = (audioRef.current.ctx.currentTime - loopPlayback.startedAt) % duration;
-        }
+        // Duration check for loop playback (elapsed calculation removed as unused)
       }
 
       if (isPlayingRef.current && transportRef.current && audioRef.current.ctx) {
@@ -1175,7 +1207,9 @@ export default function Home() {
               const fillStepIndex = (step - transport.fillStartStep + transport.stepsPerBar) % transport.stepsPerBar;
               const barsInLoop = Math.max(1, Math.round(transport.baseTotalSteps / BASE_STEPS_PER_BAR));
               const barOffset = Math.min(1, barsInLoop - 1) * BASE_STEPS_PER_BAR;
-              const fillSteps = resolveFillOffsets(activeSteps, 16);
+              const currentBar = Math.floor(fillStepIndex / transport.stepsPerBar);
+              const barStart = (currentBar % 2 === 0 ? 0 : 16) as 0 | 16;
+              const fillSteps = resolveFillOffsets(activeSteps, barStart);
               const baseIndex = Math.floor((fillStepIndex / transport.stepsPerBar) * BASE_STEPS_PER_BAR);
               const stepEvent = fillSteps[baseIndex % fillSteps.length];
               const nextIndex = toSliceIndex(stepEvent, barOffset);
