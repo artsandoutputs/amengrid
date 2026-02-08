@@ -108,13 +108,13 @@ Patterns support 32nd-note retrigs for micro-timing variations.
 - ✅ Phase 1: Audio Ingest & Conversion (including YouTube)
 - ✅ Phase 2: Audio Analysis (BPM, downbeats, bar grid)
 - ✅ Phase 3: Loop Selection UI
-- ✅ Phase 4: Slicing Engine
+- ✅ Phase 4: Slicing Engine (with grid quantization)
 - ✅ Phase 5: Pattern Engine (with memory leak fixes)
 - ✅ Phase 6: Preset Pattern Packs (16 genres, 1,280 patterns)
+- ✅ Phase 7: Export (render engine, WAV export, playback preview)
 - ✅ Phase 8: YouTube Pipeline
 
-**In Progress / Planned:**
-- Phase 7: Export (render engine, WAV export)
+**Status:** Feature-complete for MVP
 
 For detailed documentation, see:
 - [Product Requirements Document](docs/PRD.md)
