@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
+import cors from "cors";
 import { buildFfmpegArgs, runFfmpeg } from "./lib/ffmpeg.js";
 import {
   ensureStorageDirs,
@@ -10,25 +11,36 @@ import {
   resolveOriginalPath,
   toPublicPath
 } from "./lib/storage.js";
+import {
+  YouTubeError,
+  downloadYouTubeAudio,
+  enforceDownloadedSize,
+  fetchYouTubeMetadata,
+  guardYouTubeLimits,
+  inferMimeFromPath,
+  validateYouTubeUrl
+} from "./lib/youtube.js";
 import { registerAnalyzeRoutes } from "./routes/analyze.js";
 import { registerSliceRoutes } from "./routes/slice.js";
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3000";
 
 ensureStorageDirs();
 
 const app = express();
 
+// Security: CORS configuration
+app.use(cors({
+  origin: CORS_ORIGIN,
+  credentials: true,
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"]
+}));
+
 app.use(express.json({ limit: "1mb" }));
 app.use("/storage", express.static(path.resolve(process.cwd(), "storage")));
-
-app.options("*", (_req, res) => {
-  res.sendStatus(200);
-});
-
-// Uncomment when serving cross-origin clients.
-// app.use(cors({ origin: "http://localhost:3000" }));
 
 const storage = multer.diskStorage({
   destination: (req, _file, cb) => {
@@ -88,6 +100,51 @@ app.post("/api/upload", upload.single("file"), async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/youtube", async (req, res, next) => {
+  try {
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!url) {
+      res.status(400).json({ error: "Missing YouTube URL." });
+      return;
+    }
+
+    const normalized = validateYouTubeUrl(url);
+    const metadata = await fetchYouTubeMetadata(normalized);
+    guardYouTubeLimits(metadata);
+
+    const id = generateId();
+    const originalPath = await downloadYouTubeAudio(normalized, id);
+    const size = enforceDownloadedSize(originalPath);
+    const convertedPath = resolveConvertedPath(id);
+
+    const args = buildFfmpegArgs(originalPath, convertedPath);
+    await runFfmpeg(args);
+
+    res.json({
+      id,
+      source: "youtube",
+      original: {
+        path: toPublicPath(originalPath),
+        mime: inferMimeFromPath(originalPath),
+        size
+      },
+      converted: {
+        path: toPublicPath(convertedPath),
+        format: "wav",
+        sampleRate: 44100,
+        bitDepth: 16,
+        channels: 1
+      }
+    });
+  } catch (error) {
+    if (error instanceof YouTubeError) {
+      res.status(error.status).json({ error: error.message, hint: error.hint, details: error.details });
+      return;
+    }
     next(error);
   }
 });

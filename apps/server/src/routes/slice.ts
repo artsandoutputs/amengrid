@@ -5,7 +5,22 @@ import { resolveConvertedPath, resolveSlicesDir, resolvePatternsPath } from "../
 import { sliceLoopToWavs, type LoopSelection } from "../lib/slicing.js";
 import { buildPatterns } from "../lib/patterns.js";
 
-const isValidId = (id: string) => /^[a-f0-9-]{16,}$/i.test(id);
+const isValidId = (id: string) => /^[a-f0-9-]{36}$/i.test(id); // UUID format validation
+
+// Security: Numeric bounds validation
+const validateBpm = (bpm: unknown): number => {
+  if (typeof bpm !== "number" || isNaN(bpm) || bpm < 20 || bpm > 300) {
+    throw new Error("BPM must be a number between 20 and 300");
+  }
+  return bpm;
+};
+
+const validateBeatsPerBar = (beats: unknown): number => {
+  if (typeof beats !== "number" || isNaN(beats) || beats < 1 || beats > 16) {
+    throw new Error("beatsPerBar must be a number between 1 and 16");
+  }
+  return beats;
+};
 
 const makeLoopKey = (startSec: number, endSec: number, bars: number, subdivision: number) => {
   const start = startSec.toFixed(3).replace(/\./g, "p");
@@ -37,12 +52,11 @@ export const registerSliceRoutes = (app: Express) => {
           res.status(400).json({ error: "Bars must be 1/4, 1/2, 1, 2, 4, 8, or 16." });
           return;
         }
-        if (typeof bpm !== "number" || bpm <= 0) {
-          res.status(400).json({ error: "Missing or invalid bpm." });
-          return;
-        }
-        if (typeof beatsPerBar !== "number" || beatsPerBar <= 0) {
-          res.status(400).json({ error: "Missing or invalid beatsPerBar." });
+        try {
+          validateBpm(bpm);
+          validateBeatsPerBar(beatsPerBar);
+        } catch (err) {
+          res.status(400).json({ error: err instanceof Error ? err.message : "Invalid parameters" });
           return;
         }
         if (typeof stepsPerBar !== "number" || stepsPerBar <= 0) {

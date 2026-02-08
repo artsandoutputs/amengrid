@@ -2,6 +2,17 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 
+// Security: Path traversal prevention
+export const validateStoragePath = (targetPath: string, baseDir: string): string => {
+  const normalized = path.normalize(targetPath);
+  const resolved = path.resolve(normalized);
+  const base = path.resolve(baseDir);
+  if (!resolved.startsWith(base + path.sep) && resolved !== base) {
+    throw new Error("Path traversal attempt detected");
+  }
+  return resolved;
+};
+
 export const STORAGE_DIR = path.resolve(process.cwd(), "storage");
 export const ORIGINAL_DIR = path.join(STORAGE_DIR, "original");
 export const CONVERTED_DIR = path.join(STORAGE_DIR, "converted");
