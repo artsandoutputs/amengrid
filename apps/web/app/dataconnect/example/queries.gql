@@ -1,0 +1,23 @@
+mutation CreateUser($displayName: String!, $email: String, $photoUrl: String) @auth(level: USER, insecureReason: "This operation is safe to expose to all logged in users.") {
+  user_insert(data: {displayName: $displayName, email: $email, photoUrl: $photoUrl})
+}
+
+query ListMySliceProjects @auth(level: USER) {
+  sliceProjects(where: {userId: {eq_expr: "auth.uid"}}) {
+    id
+    name
+    description
+  }
+}
+
+mutation CreateSliceProject($name: String!, $description: String, $audioFileId: UUID!) @auth(level: USER) {
+  sliceProject_insert(data: {name: $name, description: $description, audioFileId: $audioFileId, userId_expr: "auth.uid"})
+}
+
+query ListPublicFolders @auth(level: PUBLIC, insecureReason: "This operation is safe to expose to the public") {
+  folders {
+    id
+    folderName
+    description
+  }
+}

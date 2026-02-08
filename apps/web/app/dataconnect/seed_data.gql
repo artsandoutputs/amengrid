@@ -1,0 +1,90 @@
+mutation CreateSeedData @transaction @auth(level: NO_ACCESS) {
+  user_insertMany(data: [
+    {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      displayName: "demouser1",
+      createdAt: "2024-01-01T00:00:00Z"
+    },
+    {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      displayName: "demouser2",
+      createdAt: "2024-01-01T00:00:00Z"
+    }
+  ])
+  audioFile_insertMany(data: [
+    {
+      id: "650e8400-e29b-41d4-a716-446655440002",
+      userId: "550e8400-e29b-41d4-a716-446655440000",
+      fileName: "demoaudio1.mp3",
+      fileUrl: "https://example.com/demoaudio1.mp3",
+      createdAt: "2024-01-02T00:00:00Z",
+      duration: 120.0
+    },
+    {
+      id: "650e8400-e29b-41d4-a716-446655440003",
+      userId: "550e8400-e29b-41d4-a716-446655440001",
+      fileName: "demoaudio2.mp3",
+      fileUrl: "https://example.com/demoaudio2.mp3",
+      createdAt: "2024-01-02T00:00:00Z",
+      duration: 180.0
+    }
+  ])
+  sliceProject_insertMany(data: [
+    {
+      id: "750e8400-e29b-41d4-a716-446655440004",
+      audioFileId: "650e8400-e29b-41d4-a716-446655440002",
+      userId: "550e8400-e29b-41d4-a716-446655440000",
+      name: "demosliceproject1",
+      createdAt: "2024-01-03T00:00:00Z",
+      updatedAt: "2024-01-03T00:00:00Z"
+    },
+    {
+      id: "750e8400-e29b-41d4-a716-446655440005",
+      audioFileId: "650e8400-e29b-41d4-a716-446655440003",
+      userId: "550e8400-e29b-41d4-a716-446655440001",
+      name: "demosliceproject2",
+      createdAt: "2024-01-03T00:00:00Z",
+      updatedAt: "2024-01-03T00:00:00Z"
+    }
+  ])
+  slice_insertMany(data: [
+    {
+      id: "850e8400-e29b-41d4-a716-446655440006",
+      sliceProjectId: "750e8400-e29b-41d4-a716-446655440004",
+      sliceUrl: "https://example.com/demoslice1.mp3",
+      startTime: 10.0,
+      endTime: 20.0
+    },
+    {
+      id: "850e8400-e29b-41d4-a716-446655440007",
+      sliceProjectId: "750e8400-e29b-41d4-a716-446655440005",
+      sliceUrl: "https://example.com/demoslice2.mp3",
+      startTime: 15.0,
+      endTime: 25.0
+    }
+  ])
+  folder_insertMany(data: [
+    {
+      id: "950e8400-e29b-41d4-a716-446655440008",
+      userId: "550e8400-e29b-41d4-a716-446655440000",
+      folderName: "demofolder1",
+      createdAt: "2024-01-04T00:00:00Z"
+    },
+    {
+      id: "950e8400-e29b-41d4-a716-446655440009",
+      userId: "550e8400-e29b-41d4-a716-446655440001",
+      folderName: "demofolder2",
+      createdAt: "2024-01-04T00:00:00Z"
+    }
+  ])
+  projectFolder_insertMany(data: [
+    {
+      sliceProjectId: "750e8400-e29b-41d4-a716-446655440004",
+      folderId: "950e8400-e29b-41d4-a716-446655440008"
+    },
+    {
+      sliceProjectId: "750e8400-e29b-41d4-a716-446655440005",
+      folderId: "950e8400-e29b-41d4-a716-446655440009"
+    }
+  ])
+}

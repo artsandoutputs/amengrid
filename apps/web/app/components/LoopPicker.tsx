@@ -17,7 +17,7 @@ type LoopPickerProps = {
 };
 
 const barChoices = [0.25, 0.5, 1, 2, 4, 8, 16];
-const nudgeChoices = [1, 2, 4];
+const nudgeChoices = [0.25, 0.5, 1, 2, 4];
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const formatBarsLabel = (bars: number) => {
   if (bars === 0.25) return "1/4 bar";
@@ -55,7 +55,7 @@ export const LoopPicker = ({
   useEffect(() => {
     if (!bpm || durationSec <= 0) return;
     const barDur = barDuration;
-    const nextViewport = clamp(3 * barDur, 2, Math.min(30, durationSec));
+    const nextViewport = clamp((3 * barDur) / 32, 0.25, Math.min(30, durationSec));
     setViewportSec(nextViewport);
     const maxScroll = Math.max(0, durationSec - nextViewport);
     setScrollSec(clamp(downbeat0Sec, 0, maxScroll));
@@ -93,7 +93,7 @@ export const LoopPicker = ({
     const pxPerSec = rect.width / Math.max(0.001, viewportSec || durationSec);
     const timeSec = scrollSec + (event.clientX - rect.left) / pxPerSec;
     const pointerBarIndex = Math.round((timeSec - downbeat0Sec) / barDuration);
-    const offsetBars = pointerBarIndex - startBarIndex;
+    const offsetBars = pointerBarIndex - Math.round(startBarIndex);
     setDragState({ offsetBars });
     container.setPointerCapture(event.pointerId);
   };
@@ -108,7 +108,7 @@ export const LoopPicker = ({
     const pointerBarIndex = Math.round((timeSec - downbeat0Sec) / barDuration);
     const rawIndex = pointerBarIndex - dragState.offsetBars;
     const nextIndex = Math.min(maxStartBar, Math.max(0, rawIndex));
-    onStartBarChange(nextIndex);
+    onStartBarChange(Math.round(nextIndex));
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -150,7 +150,7 @@ export const LoopPicker = ({
   const applyNudge = (deltaBars: number) => {
     if (!bpm) return;
     const nextIndex = Math.min(maxStartBar, Math.max(0, startBarIndex + deltaBars));
-    onStartBarChange(nextIndex);
+    onStartBarChange(Math.round(nextIndex));
   };
 
   useEffect(() => {
@@ -178,7 +178,6 @@ export const LoopPicker = ({
   const totalSteps = bpm && barDuration > 0 ? Math.max(1, Math.round(viewportSec / barDuration)) : 1;
   const leftPercent = bpm && viewportSec > 0 ? ((startSec - scrollSec) / viewportSec) * 100 : 0;
   const widthPercent = bpm && viewportSec > 0 ? ((endSec - startSec) / viewportSec) * 100 : 0;
-
 
   return (
     <section className="analysis">

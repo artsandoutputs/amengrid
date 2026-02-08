@@ -10,6 +10,8 @@ type WaveformProps = {
   highlightStep?: number | null;
   highlightSliceIndex?: number | null;
   sliceCount?: number | null;
+  accentFill?: string | null;
+  accentStrong?: string | null;
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -21,7 +23,9 @@ export const Waveform = ({
   progress,
   highlightStep,
   highlightSliceIndex,
-  sliceCount
+  sliceCount,
+  accentFill,
+  accentStrong
 }: WaveformProps) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -48,9 +52,9 @@ export const Waveform = ({
       const mid = height / 2;
       const waveColor = isActive ? "#0f0b08" : "#4f463a";
       const gridColor = "rgba(90, 84, 74, 0.4)";
-      const highlightColor = "rgba(255, 170, 40, 0.6)";
-      const progressColor = "rgba(255, 170, 40, 0.32)";
-      const sourceHighlightColor = "rgba(255, 90, 40, 0.55)";
+      const highlightColor = accentStrong ?? "rgba(255, 170, 40, 0.6)";
+      const progressColor = accentFill ?? "rgba(255, 170, 40, 0.32)";
+      const sourceHighlightColor = accentStrong ?? "rgba(255, 90, 40, 0.55)";
 
       if (progress !== null && progress !== undefined) {
         const fillWidth = width * clamp(progress, 0, 1);
@@ -93,29 +97,76 @@ export const Waveform = ({
         ctx.strokeStyle = color;
         ctx.globalAlpha = alpha;
         ctx.lineWidth = 2;
+        const steps = Math.max(1, totalSteps);
+        const pointsPerStep = Math.floor(source.length / steps);
+        const stepWidth = width / steps;
+        const canAlignToSteps = pointsPerStep > 0 && source.length % steps === 0;
         const columns = Math.max(1, Math.floor(width));
-        for (let x = 0; x < columns; x += 1) {
-          const start = Math.floor((x / columns) * source.length);
-          const end = Math.max(start + 1, Math.floor(((x + 1) / columns) * source.length));
-          let max = 0;
-          for (let i = start; i < end; i += 1) {
-            const value = Math.abs(source[i]);
-            if (value > max) max = value;
+
+        if (canAlignToSteps) {
+          for (let step = 0; step < steps; step += 1) {
+            const stepStart = step * pointsPerStep;
+            const stepEnd = stepStart + pointsPerStep;
+            const pixelStart = step * stepWidth;
+            const pixelColumns = Math.max(1, Math.floor(stepWidth));
+            for (let px = 0; px < pixelColumns; px += 1) {
+              const x = pixelStart + px;
+              const start = Math.floor(stepStart + (px / pixelColumns) * pointsPerStep);
+              const end = Math.max(start + 1, Math.floor(stepStart + ((px + 1) / pixelColumns) * pointsPerStep));
+              let max = 0;
+              for (let i = start; i < end && i < stepEnd; i += 1) {
+                const value = Math.abs(source[i]);
+                if (value > max) max = value;
+              }
+              const peak = max * (height * 0.48);
+              ctx.fillStyle = color;
+              ctx.globalAlpha = alpha * 0.45;
+              ctx.fillRect(x, mid - peak, 1.4, peak * 2);
+              ctx.globalAlpha = alpha;
+              ctx.beginPath();
+              ctx.moveTo(x + 0.5, mid - peak);
+              ctx.lineTo(x + 0.5, mid + peak);
+              ctx.stroke();
+            }
           }
-          const peak = max * (height * 0.48);
-          ctx.fillStyle = color;
-          ctx.globalAlpha = alpha * 0.45;
-          ctx.fillRect(x, mid - peak, 1.4, peak * 2);
-          ctx.globalAlpha = alpha;
-          ctx.beginPath();
-          ctx.moveTo(x + 0.5, mid - peak);
-          ctx.lineTo(x + 0.5, mid + peak);
-          ctx.stroke();
+        } else {
+          for (let x = 0; x < columns; x += 1) {
+            const start = Math.floor((x / columns) * source.length);
+            const end = Math.max(start + 1, Math.floor(((x + 1) / columns) * source.length));
+            let max = 0;
+            for (let i = start; i < end; i += 1) {
+              const value = Math.abs(source[i]);
+              if (value > max) max = value;
+            }
+            const peak = max * (height * 0.48);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = alpha * 0.45;
+            ctx.fillRect(x, mid - peak, 1.4, peak * 2);
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.moveTo(x + 0.5, mid - peak);
+            ctx.lineTo(x + 0.5, mid + peak);
+            ctx.stroke();
+          }
         }
         ctx.globalAlpha = 1;
       };
 
       drawEnvelope(peaks, waveColor, 0.75);
+
+      if (
+        highlightSliceIndex !== null &&
+        highlightSliceIndex !== undefined &&
+        sliceCount &&
+        sliceCount > 0
+      ) {
+        const sliceWidth = width / sliceCount;
+        const sliceX = (highlightSliceIndex % sliceCount) * sliceWidth;
+        ctx.fillStyle = sourceHighlightColor;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(sliceX, 0, sliceWidth, Math.max(6, height * 0.16));
+        ctx.globalAlpha = 1;
+      }
     };
 
     resize();
@@ -125,7 +176,7 @@ export const Waveform = ({
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     return () => observer.disconnect();
-  }, [peaks, totalSteps, isActive, progress, highlightStep, highlightSliceIndex, sliceCount]);
+  }, [peaks, totalSteps, isActive, progress, highlightStep, highlightSliceIndex, sliceCount, accentFill, accentStrong]);
 
   if (!peaks) {
     return <div className="waveform-placeholder" />;

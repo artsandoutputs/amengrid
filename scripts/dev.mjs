@@ -18,8 +18,9 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 for (const proc of procs) {
-  proc.on("exit", (code) => {
-    if (code && code !== 0) {
+  proc.on("exit", (code, signal) => {
+    // Ignore signal 130 (SIGINT) which is normal for file watcher restarts
+    if (code && code !== 0 && code !== 130) {
       shutdown(code);
     }
   });

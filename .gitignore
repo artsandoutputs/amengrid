@@ -23,3 +23,9 @@ build/
 .env
 .env.local
 .env.*.local
+
+# Review and audit files (should not be committed)
+*_REVIEW.md
+*_AUDIT.md
+*_REVIEW*.md
+*_AUDIT*.md

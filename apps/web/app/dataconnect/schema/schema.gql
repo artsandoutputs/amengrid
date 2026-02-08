@@ -1,0 +1,45 @@
+type User @table {
+  displayName: String!
+  createdAt: Timestamp!
+  email: String
+  photoUrl: String
+}
+
+type AudioFile @table {
+  user: User!
+  fileName: String!
+  fileUrl: String!
+  duration: Float!
+  createdAt: Timestamp!
+  fileSize: Int
+  mimeType: String
+}
+
+type SliceProject @table {
+  user: User!
+  audioFile: AudioFile!
+  name: String!
+  createdAt: Timestamp!
+  updatedAt: Timestamp!
+  description: String
+}
+
+type Slice @table {
+  sliceProject: SliceProject!
+  startTime: Float!
+  endTime: Float!
+  sliceUrl: String!
+  sliceName: String
+}
+
+type Folder @table {
+  user: User!
+  folderName: String!
+  createdAt: Timestamp!
+  description: String
+}
+
+type ProjectFolder @table(key: ["sliceProject", "folder"]) {
+  sliceProject: SliceProject!
+  folder: Folder!
+}
