@@ -79,6 +79,8 @@ Only one active loop is required for MVP.
 Slice Modes
 	1.	Grid Slicing (Default)
 	◦	Fixed steps per bar: 16, 32, or 64
+	◦	Optional BPM-based quantization for beat grid alignment
+	◦	Grid-quantized mode aligns slices to beat boundaries for clean loop starts
 	2.	Transient Snap (Optional)
 	◦	Onset detection
 	◦	Snap to nearest grid position within tolerance
@@ -87,6 +89,7 @@ Each slice contains:
 	•	Index
 	•	Start time
 	•	Duration
+	•	BPM and bar alignment metadata (when quantized)
 Slices are non-overlapping and ordered.
 
 10. Pattern Engine
@@ -145,9 +148,37 @@ Export Formats (MVP)
 	•	Rendered WAV file
 	•	Loop length selectable
 	•	Optional normalization
+	•	Playback preview with WebAudio API
+	•	In-browser playback before download
 Future exports (non-MVP):
 	•	Stems
 	•	MIDI slice triggers
+
+13. User Interface & Themes
+Design System
+	•	Two themes: Default (light) and Dark (high contrast)
+	•	Dark theme with improved contrast for waveform visibility
+	•	Responsive layout for desktop browsers
+	•	Keyboard-first interaction model
+Keyboard Controls
+	•	Space: Play/Stop
+	•	1-8: Switch patterns (main patterns)
+	•	Shift+1-8: Trigger fills
+	•	Arrow keys: Nudge loop position
+	•	R key (hold): Repeat current slice
+	•	E key (hold): Reverse playback
+
+14. Security & Validation
+Input Validation
+	•	BPM validation: 20-300 range
+	•	beatsPerBar validation: 1-16 range
+	•	UUID format validation for file IDs
+	•	Path traversal protection in file resolution
+CORS & Access Control
+	•	CORS enabled with configurable origin
+	•	File uploads limited to 200MB
+	•	YouTube downloads limited to 900 seconds / 100MB
+	•	Support for standard HTTP methods (GET, POST, OPTIONS)
 
 13. YouTube Import Pipeline (Implemented)
 Status
