@@ -497,7 +497,7 @@ export default function Home() {
   const [playbackBpm, setPlaybackBpm] = useState<number>(130);
   const [queuedPlaybackBpm, setQueuedPlaybackBpm] = useState<number | null>(null);
   const [controlsOpen, setControlsOpen] = useState(true);
-  const [theme, setTheme] = useState<"default" | "vst">("default");
+  const [theme, setTheme] = useState<"default" | "dark">("default");
   const [fullBuffer, setFullBuffer] = useState<AudioBuffer | null>(null);
   const [fullPeaks, setFullPeaks] = useState<number[] | null>(null);
   const [slicePeaks, setSlicePeaks] = useState<number[] | null>(null);
@@ -585,7 +585,7 @@ export default function Home() {
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("amengrid_theme");
-    if (storedTheme === "vst" || storedTheme === "default") {
+    if (storedTheme === "dark" || storedTheme === "default") {
       setTheme(storedTheme);
     }
   }, []);
@@ -933,7 +933,7 @@ export default function Home() {
     setAccepted(true);
   };
 
-  const handleThemeChange = (next: "default" | "vst") => {
+  const handleThemeChange = (next: "default" | "dark") => {
     setTheme(next);
     window.localStorage.setItem("amengrid_theme", next);
   };
@@ -1940,11 +1940,11 @@ export default function Home() {
                 Default
               </button>
               <button
-                className={`theme-button ${theme === "vst" ? "active" : ""}`}
-                onClick={() => handleThemeChange("vst")}
+                className={`theme-button ${theme === "dark" ? "active" : ""}`}
+                onClick={() => handleThemeChange("dark")}
                 type="button"
               >
-                VST
+                Dark
               </button>
             </div>
           </div>
