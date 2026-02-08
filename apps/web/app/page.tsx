@@ -11,7 +11,7 @@ import {
   type PatternPack,
   type StepEvent,
   resolveFillOffsets
-} from "./patternPacks";
+} from "./PatternPacks";
 import { LoopPicker } from "./components/LoopPicker";
 import { Waveform } from "./components/Waveform";
 
