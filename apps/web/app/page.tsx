@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PATTERN_PACKS, type PatternPack, type StepEvent, resolveFillOffsets } from "./patternPacks";
+import {
+  PATTERN_PACKS,
+  ROLE_BASE,
+  ROLE_GHOST,
+  ROLE_HAT,
+  ROLE_KICK,
+  ROLE_SNARE,
+  type PatternPack,
+  type StepEvent,
+  resolveFillOffsets
+} from "./patternPacks";
 import { LoopPicker } from "./components/LoopPicker";
 import { Waveform } from "./components/Waveform";
 
@@ -31,6 +41,32 @@ type LoopPlaybackState = {
   startSec: number;
   endSec: number;
   startedAt: number;
+};
+
+type RoleSlices = {
+  kick: number[];
+  snare: number[];
+  hat: number[];
+  ghost: number[];
+};
+
+type SliceLoopPoint = {
+  start: number;
+  end: number;
+} | null;
+
+type ExportItem = {
+  id: string;
+  name: string;
+  url: string;
+  createdAt: number;
+  durationSec: number;
+  sizeBytes: number;
+  normalized: boolean;
+  bars: LoopBars;
+  bpm: number;
+  stepsPerBar: number;
+  patternName: string;
 };
 
 type TransportState = {
@@ -63,6 +99,7 @@ type TransportState = {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const BASE_STEPS_PER_BAR = 16;
+const LOCKED_STEPS_PER_BAR = 16;
 
 const computePeaksFromChannel = (data: Float32Array, points: number) => {
   const blockSize = Math.max(1, Math.floor(data.length / points));
@@ -157,6 +194,274 @@ const reorderSlicePeaks = (peaks: number[], order: number[], pointsPerSlice: num
   return reordered;
 };
 
+const buildDefaultRoleSlices = (steps: number): RoleSlices => {
+  const safe = (value: number) => Math.max(0, Math.min(steps - 1, value));
+  const result: RoleSlices = { kick: [], snare: [], hat: [], ghost: [] };
+  const bars = Math.max(1, Math.round(steps / BASE_STEPS_PER_BAR));
+  for (let bar = 0; bar < bars; bar += 1) {
+    const base = bar * BASE_STEPS_PER_BAR;
+    result.kick.push(safe(base + 0), safe(base + 8));
+    result.snare.push(safe(base + 4), safe(base + 12));
+    result.hat.push(safe(base + 2), safe(base + 6), safe(base + 10), safe(base + 14));
+    result.ghost.push(safe(base + 3), safe(base + 7), safe(base + 11), safe(base + 15));
+  }
+  return result;
+};
+
+const computeRoleSlices = (buffer: AudioBuffer, loop: LoopSelection, steps: number): RoleSlices => {
+  const channel = buffer.getChannelData(0);
+  const sampleRate = buffer.sampleRate;
+  const startSample = Math.max(0, Math.floor(loop.startSec * sampleRate));
+  const endSample = Math.min(channel.length, Math.floor(loop.endSec * sampleRate));
+  const loopSamples = Math.max(1, endSample - startSample);
+  const totalSteps = Math.max(1, steps);
+  const samplesPerStep = Math.max(1, Math.floor(loopSamples / totalSteps));
+
+  const metrics = Array.from({ length: totalSteps }, (_, step) => {
+    const sliceStart = startSample + step * samplesPerStep;
+    const sliceEnd = Math.min(endSample, sliceStart + samplesPerStep);
+    let rms = 0;
+    let zcr = 0;
+    let hf = 0;
+    let prev = channel[sliceStart] ?? 0;
+    for (let i = sliceStart; i < sliceEnd; i += 1) {
+      const value = channel[i] ?? 0;
+      rms += value * value;
+      if ((value >= 0 && prev < 0) || (value < 0 && prev >= 0)) {
+        zcr += 1;
+      }
+      if (i > sliceStart) {
+        hf += Math.abs(value - prev);
+      }
+      prev = value;
+    }
+    const len = Math.max(1, sliceEnd - sliceStart);
+    return {
+      step,
+      rms: Math.sqrt(rms / len),
+      zcr: zcr / len,
+      hf: hf / len
+    };
+  });
+
+  const normalize = (values: number[]) => {
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const denom = max - min || 1;
+    return values.map((value) => (value - min) / denom);
+  };
+
+  const rmsNorm = normalize(metrics.map((m) => m.rms));
+  const zcrNorm = normalize(metrics.map((m) => m.zcr));
+  const hfNorm = normalize(metrics.map((m) => m.hf));
+
+  const withScore = metrics.map((m, idx) => {
+    const rms = rmsNorm[idx];
+    const zcr = zcrNorm[idx];
+    const hf = hfNorm[idx];
+    return {
+      step: m.step,
+      kick: rms * (1 - zcr) * (1 - hf),
+      snare: rms * 0.4 + hf * 0.45 + zcr * 0.15,
+      hat: zcr * 0.55 + hf * 0.45 - rms * 0.15,
+      ghost: (1 - rms) * 0.6 + zcr * 0.2 + hf * 0.2
+    };
+  });
+
+  const bars = Math.max(1, Math.round(totalSteps / BASE_STEPS_PER_BAR));
+  const selected = new Set<number>();
+  const kicks: number[] = [];
+  const snares: number[] = [];
+
+  const pickFromWindow = (stepsIn: number[], key: "kick" | "snare") => {
+    const candidates = stepsIn
+      .filter((step) => step >= 0 && step < totalSteps)
+      .map((step) => {
+        const score = withScore[step]?.[key] ?? 0;
+        return { step, score };
+      })
+      .sort((a, b) => b.score - a.score);
+    return candidates.find((c) => !selected.has(c.step))?.step ?? null;
+  };
+
+  for (let bar = 0; bar < bars; bar += 1) {
+    const base = bar * BASE_STEPS_PER_BAR;
+    const kickA = pickFromWindow([base + 0, base + 1, base + 15], "kick");
+    const kickB = pickFromWindow([base + 8, base + 9, base + 7], "kick");
+    const snareA = pickFromWindow([base + 4, base + 5, base + 3], "snare");
+    const snareB = pickFromWindow([base + 12, base + 13, base + 11], "snare");
+    for (const step of [kickA, kickB]) {
+      if (step != null && !selected.has(step)) {
+        kicks.push(step);
+        selected.add(step);
+      }
+    }
+    for (const step of [snareA, snareB]) {
+      if (step != null && !selected.has(step)) {
+        snares.push(step);
+        selected.add(step);
+      }
+    }
+  }
+
+  const preferSteps = (stepsArr: number[], weight: number) => {
+    const set = new Set(stepsArr.map((s) => ((s % BASE_STEPS_PER_BAR) + BASE_STEPS_PER_BAR) % BASE_STEPS_PER_BAR));
+    return (step: number) => (set.has(step % BASE_STEPS_PER_BAR) ? weight : 1);
+  };
+  const hatWeight = preferSteps([2, 6, 10, 14], 1.25);
+  const ghostWeight = preferSteps([3, 7, 11, 15], 1.2);
+
+  const pickPool = (key: "hat" | "ghost", count: number, weightFn?: (step: number) => number) =>
+    withScore
+      .map((m) => ({
+        step: m.step,
+        score: m[key] * (weightFn ? weightFn(m.step) : 1)
+      }))
+      .filter((m) => !selected.has(m.step))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.min(count, totalSteps))
+      .map((m) => m.step);
+
+  const hats = pickPool("hat", Math.max(8, bars * 4), hatWeight);
+  hats.forEach((s) => selected.add(s));
+  const ghosts = pickPool("ghost", Math.max(6, bars * 3), ghostWeight);
+
+  const fallback = buildDefaultRoleSlices(totalSteps);
+  return {
+    kick: kicks.length ? kicks : fallback.kick,
+    snare: snares.length ? snares : fallback.snare,
+    hat: hats.length ? hats : fallback.hat,
+    ghost: ghosts.length ? ghosts : fallback.ghost
+  };
+};
+
+const computeSliceLoops = (
+  buffer: AudioBuffer,
+  loop: LoopSelection,
+  baseStepDuration: number,
+  baseTotalSteps: number
+): SliceLoopPoint[] => {
+  const channel = buffer.getChannelData(0);
+  const sampleRate = buffer.sampleRate;
+  const startSample = Math.max(0, Math.floor(loop.startSec * sampleRate));
+  const endSample = Math.min(channel.length, Math.floor(loop.endSec * sampleRate));
+  const sliceSamples = Math.max(1, Math.floor(baseStepDuration * sampleRate));
+  const minTailGap = 0.008;
+  const tailWindow = Math.min(0.06, baseStepDuration * 0.5);
+  const minLoopLen = 0.006;
+
+  const loops: SliceLoopPoint[] = [];
+  for (let step = 0; step < baseTotalSteps; step += 1) {
+    const sliceStart = startSample + step * sliceSamples;
+    const sliceEnd = Math.min(endSample, sliceStart + sliceSamples);
+    let peak = 0;
+    for (let i = sliceStart; i < sliceEnd; i += 1) {
+      const value = Math.abs(channel[i] ?? 0);
+      if (value > peak) peak = value;
+    }
+    if (peak < 0.003) {
+      loops.push(null);
+      continue;
+    }
+    const activityThreshold = Math.max(0.004, peak * 0.2);
+    let lastActive = -1;
+    for (let i = sliceStart; i < sliceEnd; i += 1) {
+      if (Math.abs(channel[i] ?? 0) >= activityThreshold) {
+        lastActive = i;
+      }
+    }
+    if (lastActive < 0) {
+      loops.push(null);
+      continue;
+    }
+    const activeEndSec = (lastActive - sliceStart) / sampleRate;
+    if (activeEndSec >= baseStepDuration - minTailGap) {
+      loops.push(null);
+      continue;
+    }
+    const loopEnd = Math.max(0.003, activeEndSec);
+    let loopStart = Math.max(0, loopEnd - tailWindow);
+    if (loopEnd - loopStart < minLoopLen) {
+      loopStart = Math.max(0, loopEnd - minLoopLen);
+    }
+    if (loopEnd - loopStart <= 0) {
+      loops.push(null);
+      continue;
+    }
+    loops.push({ start: loopStart, end: loopEnd });
+  }
+  return loops;
+};
+
+const formatDuration = (seconds: number) => {
+  if (!Number.isFinite(seconds)) return "--:--";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+};
+
+const formatSize = (bytes: number) => {
+  if (!Number.isFinite(bytes)) return "--";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) return `${mb.toFixed(1)} MB`;
+  const kb = bytes / 1024;
+  return `${kb.toFixed(1)} KB`;
+};
+
+const encodeWav16 = (buffer: AudioBuffer, normalize: boolean) => {
+  const channels = buffer.numberOfChannels;
+  const length = buffer.length;
+  let peak = 0;
+  for (let ch = 0; ch < channels; ch += 1) {
+    const data = buffer.getChannelData(ch);
+    for (let i = 0; i < length; i += 1) {
+      const value = Math.abs(data[i]);
+      if (value > peak) peak = value;
+    }
+  }
+  const targetPeak = 0.98;
+  const scale = normalize && peak > 0 ? targetPeak / peak : 1;
+
+  const bytesPerSample = 2;
+  const blockAlign = channels * bytesPerSample;
+  const byteRate = buffer.sampleRate * blockAlign;
+  const dataSize = length * blockAlign;
+  const arrayBuffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(arrayBuffer);
+
+  const writeString = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) {
+      view.setUint8(offset + i, text.charCodeAt(i));
+    }
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, buffer.sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < length; i += 1) {
+    for (let ch = 0; ch < channels; ch += 1) {
+      const sample = buffer.getChannelData(ch)[i] * scale;
+      const clamped = Math.max(-1, Math.min(1, sample));
+      view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+      offset += 2;
+    }
+  }
+
+  return arrayBuffer;
+};
+
 export default function Home() {
   const [accepted, setAccepted] = useState(false);
   const [ingestMode, setIngestMode] = useState<"upload" | "youtube">("upload");
@@ -184,7 +489,7 @@ export default function Home() {
   const [activeFillId, setActiveFillId] = useState<string | null>(null);
   const [customPatternSteps, setCustomPatternSteps] = useState<Record<string, StepEvent[]>>({});
   const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null);
-  const [stepsPerBar, setStepsPerBar] = useState<number>(16);
+  const [stepsPerBar, setStepsPerBar] = useState<number>(LOCKED_STEPS_PER_BAR);
   const [queuedStepsPerBar, setQueuedStepsPerBar] = useState<number | null>(null);
   const [phraseBars] = useState<number>(4);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -200,6 +505,13 @@ export default function Home() {
   const [currentStep, setCurrentStep] = useState<number | null>(null);
   const [currentSliceIndex, setCurrentSliceIndex] = useState<number | null>(null);
   const [patternProgress, setPatternProgress] = useState(0);
+  const [roleSlices, setRoleSlices] = useState<RoleSlices>(() => buildDefaultRoleSlices(32));
+  const [sliceLoops, setSliceLoops] = useState<SliceLoopPoint[]>([]);
+  const [exportsList, setExportsList] = useState<ExportItem[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [normalizeExport, setNormalizeExport] = useState(false);
+  const [playingExportId, setPlayingExportId] = useState<string | null>(null);
   const tempoPresets = useMemo(() => [87, 100, 126, 140, 155, 172], []);
 
   const audioRef = useRef<{ ctx: AudioContext | null; timer: number | null }>({
@@ -220,6 +532,34 @@ export default function Home() {
     startIndex: 0,
     offset: 0
   });
+  const roleSlicesRef = useRef<RoleSlices>(buildDefaultRoleSlices(32));
+  const roleCursorRef = useRef({ kick: 0, snare: 0, hat: 0, ghost: 0 });
+  const sliceLoopsRef = useRef<SliceLoopPoint[]>([]);
+  const exportsRef = useRef<ExportItem[]>([]);
+  const exportPlaybackRef = useRef<{ source: AudioBufferSourceNode | null; gainNode: GainNode | null; buffer: AudioBuffer | null }>({ source: null, gainNode: null, buffer: null });
+
+  useEffect(() => {
+    exportsRef.current = exportsList;
+  }, [exportsList]);
+
+  useEffect(() => {
+    return () => {
+      if (exportsRef.current.length === 0) return;
+      for (const item of exportsRef.current) {
+        URL.revokeObjectURL(item.url);
+      }
+    };
+  }, []);
+
+
+  useEffect(() => {
+    roleSlicesRef.current = roleSlices;
+    roleCursorRef.current = { kick: 0, snare: 0, hat: 0, ghost: 0 };
+  }, [roleSlices]);
+
+  useEffect(() => {
+    sliceLoopsRef.current = sliceLoops;
+  }, [sliceLoops]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(DISCLAIMER_KEY);
@@ -313,7 +653,7 @@ export default function Home() {
     [displayLoopBars]
   );
 
-  const getLoopParams = (bars: LoopBars, startIndex: number, nextStepsPerBar = stepsPerBar) => {
+  const getLoopParams = (bars: LoopBars, startIndex: number, nextStepsPerBar = LOCKED_STEPS_PER_BAR) => {
     const startSec = downbeat0Sec + startIndex * barDuration;
     const endSec = Math.min(durationSec, startSec + bars * barDuration);
     const loopDuration = Math.max(0.001, endSec - startSec);
@@ -353,11 +693,24 @@ export default function Home() {
   useEffect(() => {
     if (!selectedLoop || !fullBuffer) {
       setSlicePeaks(null);
+      setSliceLoops([]);
       return;
     }
     const totalSteps = Math.max(1, Math.round(selectedLoop.bars * BASE_STEPS_PER_BAR));
     setSlicePeaks(buildSlicePeaksFromBuffer(fullBuffer, selectedLoop, totalSteps));
   }, [selectedLoop, fullBuffer]);
+
+  useEffect(() => {
+    if (!selectedLoop || !fullBuffer) {
+      setRoleSlices(buildDefaultRoleSlices(loopSliceCount));
+      setSliceLoops([]);
+      return;
+    }
+    const totalSteps = Math.max(1, Math.round(selectedLoop.bars * BASE_STEPS_PER_BAR));
+    setRoleSlices(computeRoleSlices(fullBuffer, selectedLoop, totalSteps));
+    const baseStepDuration = (selectedLoop.endSec - selectedLoop.startSec) / totalSteps;
+    setSliceLoops(computeSliceLoops(fullBuffer, selectedLoop, baseStepDuration, totalSteps));
+  }, [selectedLoop, fullBuffer, loopSliceCount]);
 
   const activePack = useMemo<PatternPack>(
     () => PATTERN_PACKS.find((pack) => pack.id === patternPackId) ?? PATTERN_PACKS[0],
@@ -375,6 +728,26 @@ export default function Home() {
     const pattern = patternsById.get(patternId);
     if (!pattern) return null;
     return customPatternStepsRef.current[patternId] ?? pattern.steps;
+  };
+
+  const getRoleSlice = (role: keyof RoleSlices, advance: boolean) => {
+    const pool = roleSlicesRef.current[role] ?? [];
+    if (pool.length === 0) return 0;
+    const cursor = roleCursorRef.current[role] % pool.length;
+    if (advance) {
+      roleCursorRef.current[role] = (cursor + 1) % pool.length;
+    }
+    return pool[cursor];
+  };
+
+  const mapRoleIndex = (index: number, advance: boolean) => {
+    if (index < ROLE_BASE) return index;
+    const role = (index - ROLE_BASE) % 4;
+    if (role === 0) return getRoleSlice("kick", advance);
+    if (role === 1) return getRoleSlice("snare", advance);
+    if (role === 2) return getRoleSlice("hat", advance);
+    if (role === 3) return getRoleSlice("ghost", advance);
+    return index;
   };
 
   const displayPatternId = useMemo(() => {
@@ -399,8 +772,10 @@ export default function Home() {
 
   const patternStepsTotal = useMemo(() => {
     if (!displayPattern) return loopSliceCount;
-    return isFillPattern ? stepsPerBar : Math.max(1, Math.round(displayLoopBars * stepsPerBar));
-  }, [displayPattern, loopSliceCount, isFillPattern, stepsPerBar, displayLoopBars]);
+    return isFillPattern
+      ? LOCKED_STEPS_PER_BAR
+      : Math.max(1, Math.round(displayLoopBars * LOCKED_STEPS_PER_BAR));
+  }, [displayPattern, loopSliceCount, isFillPattern, displayLoopBars]);
 
   const patternOrder = useMemo(() => {
     if (!displayPatternSteps) return null;
@@ -411,10 +786,11 @@ export default function Home() {
     const mapped: number[] = [];
     for (let step = 0; step < patternStepsTotal; step += 1) {
       const baseStepIndex = Math.floor((step / patternStepsTotal) * baseTotalSteps);
-      mapped.push(expandedBase[baseStepIndex % expandedBase.length] ?? 0);
+      const raw = expandedBase[baseStepIndex % expandedBase.length] ?? 0;
+      mapped.push(mapRoleIndex(raw, false));
     }
     return mapped;
-  }, [displayPatternSteps, patternStepsTotal, isFillPattern, displayLoopBars]);
+  }, [displayPatternSteps, patternStepsTotal, isFillPattern, displayLoopBars, roleSlices]);
 
   const patternPeaks = useMemo(() => {
     if (!slicePeaks || !patternOrder) return null;
@@ -485,7 +861,10 @@ export default function Home() {
   };
 
   const applyStepsPerBar = (nextSteps: number) => {
-    const safeSteps = clamp(nextSteps, 4, 64);
+    const safeSteps = 16;
+    if (nextSteps !== 16) {
+      setSliceStatus("Slice resolution is locked to 16ths for groove consistency.");
+    }
     if (isPlayingRef.current) {
       setStepsPerBar(safeSteps);
       setQueuedStepsPerBar(safeSteps);
@@ -496,6 +875,12 @@ export default function Home() {
       setStepsPerBar(safeSteps);
     }
   };
+
+  useEffect(() => {
+    if (stepsPerBar !== LOCKED_STEPS_PER_BAR) {
+      applyStepsPerBar(LOCKED_STEPS_PER_BAR);
+    }
+  }, [stepsPerBar]);
 
   useEffect(() => {
     if (!selectedLoop) return;
@@ -563,7 +948,7 @@ export default function Home() {
     setActiveLoopBars(2);
     setActiveStartBarIndex(0);
     setQueuedLoop(null);
-    setStepsPerBar(16);
+    setStepsPerBar(LOCKED_STEPS_PER_BAR);
     setQueuedStepsPerBar(null);
     setActiveMainId(null);
     setQueuedMainId(null);
@@ -793,12 +1178,12 @@ export default function Home() {
       void ctx.resume();
     }
 
-    const activeParams = getLoopParams(activeLoopBars, activeStartBarIndex, stepsPerBar);
+    const activeParams = getLoopParams(activeLoopBars, activeStartBarIndex, LOCKED_STEPS_PER_BAR);
     const totalSteps = activeParams.totalSteps;
     const loopDuration = activeParams.loopDuration;
     const baseStepDuration = activeParams.baseStepDuration;
     const baseTotalSteps = activeParams.baseTotalSteps;
-    const playbackStepDuration = (60 / playbackBpm) * (4 / stepsPerBar);
+    const playbackStepDuration = (60 / playbackBpm) * (4 / LOCKED_STEPS_PER_BAR);
     const startTime = ctx.currentTime + 0.001;
 
     transportRef.current = {
@@ -807,7 +1192,7 @@ export default function Home() {
       loopDurationSec: loopDuration,
       baseStepDuration,
       playbackStepDuration,
-      stepsPerBar,
+      stepsPerBar: LOCKED_STEPS_PER_BAR,
       totalSteps,
       baseTotalSteps,
       phraseBars,
@@ -894,7 +1279,7 @@ export default function Home() {
 
         if (transport.queuedLoop && loopBoundaryTime !== null && when >= loopBoundaryTime) {
           const nextLoop = transport.queuedLoop;
-          const nextParams = getLoopParams(nextLoop.bars, nextLoop.startBarIndex, transport.stepsPerBar);
+          const nextParams = getLoopParams(nextLoop.bars, nextLoop.startBarIndex, LOCKED_STEPS_PER_BAR);
           transport.loopStartSec = nextParams.startSec;
           transport.loopDurationSec = nextParams.loopDuration;
           transport.baseStepDuration = nextParams.baseStepDuration;
@@ -921,7 +1306,7 @@ export default function Home() {
         }
 
         if (transport.queuedStepsPerBar && stepsBoundaryTime !== null && when >= stepsBoundaryTime) {
-          const nextSteps = transport.queuedStepsPerBar;
+          const nextSteps = LOCKED_STEPS_PER_BAR;
           const nextParams = getLoopParams(activeLoopBars, activeStartBarIndex, nextSteps);
           transport.stepsPerBar = nextParams.stepsPerBar;
           transport.totalSteps = nextParams.totalSteps;
@@ -1033,10 +1418,15 @@ export default function Home() {
           sliceIndex = ((rawIndex % baseSteps) + baseSteps) % baseSteps;
           reverseHoldRef.current.offset += 1;
         }
-        const offset = transport.loopStartSec + (sliceIndex % transport.baseTotalSteps) * transport.baseStepDuration;
+        if (sliceIndex >= ROLE_BASE) {
+          sliceIndex = mapRoleIndex(sliceIndex, true);
+        }
+        const baseIndex = (sliceIndex % transport.baseTotalSteps + transport.baseTotalSteps) % transport.baseTotalSteps;
+        const offset = transport.loopStartSec + baseIndex * transport.baseStepDuration;
         const dur = transport.playbackStepDuration;
         const subCount = Math.max(1, retrigCount);
         const subDur = dur / subCount;
+        const sliceLoop = sliceLoopsRef.current[baseIndex] ?? null;
 
         for (let sub = 0; sub < subCount; sub += 1) {
           const subStart = when + sub * subDur;
@@ -1057,6 +1447,19 @@ export default function Home() {
               }
             } else {
               gain.gain.setValueAtTime(gainScale, subStart);
+            }
+
+            if (sliceLoop) {
+              source.loop = true;
+              source.loopStart = offset + sliceLoop.start;
+              source.loopEnd = offset + sliceLoop.end;
+            } else if (subDur > transport.baseStepDuration + 0.0001) {
+              const loopEnd = Math.min(fullBuffer.duration, offset + transport.baseStepDuration);
+              if (loopEnd > offset + 0.0005) {
+                source.loop = true;
+                source.loopStart = offset;
+                source.loopEnd = loopEnd;
+              }
             }
 
             source.start(subStart, offset, subDur);
@@ -1213,7 +1616,8 @@ export default function Home() {
               const baseIndex = Math.floor((fillStepIndex / transport.stepsPerBar) * BASE_STEPS_PER_BAR);
               const stepEvent = fillSteps[baseIndex % fillSteps.length];
               const nextIndex = toSliceIndex(stepEvent, barOffset);
-              setCurrentSliceIndex(nextIndex >= 0 ? nextIndex : null);
+              const resolved = mapRoleIndex(nextIndex, false);
+              setCurrentSliceIndex(resolved >= 0 ? resolved : null);
             } else {
               const order = expandOrder(activeSteps, transport.baseTotalSteps);
               const baseStepIndex = Math.floor(
@@ -1221,7 +1625,8 @@ export default function Home() {
               );
               const stepEvent = order[baseStepIndex % transport.baseTotalSteps];
               const nextIndex = toSliceIndex(stepEvent);
-              setCurrentSliceIndex(nextIndex >= 0 ? nextIndex : null);
+              const resolved = mapRoleIndex(nextIndex, false);
+              setCurrentSliceIndex(resolved >= 0 ? resolved : null);
             }
           } else {
             setCurrentSliceIndex(null);
@@ -1315,7 +1720,7 @@ export default function Home() {
           bars: selectedLoop.bars,
           bpm,
           beatsPerBar: 4,
-          stepsPerBar
+          stepsPerBar: LOCKED_STEPS_PER_BAR
         })
       });
       const json = (await res.json().catch(() => ({}))) as { error?: string };
@@ -1330,6 +1735,176 @@ export default function Home() {
     } finally {
       setIsSlicing(false);
     }
+  };
+
+  const renderExport = async () => {
+    if (!fullBuffer || !selectedLoop) return;
+    const activePatternId =
+      transportRef.current?.activeFillId ??
+      transportRef.current?.activeMainId ??
+      activeMainId ??
+      mainPatterns[0]?.id ??
+      null;
+    if (!activePatternId) return;
+    const pattern = patternsById.get(activePatternId);
+    if (!pattern) return;
+    const steps = getPatternStepsById(activePatternId);
+    if (!steps) return;
+
+    setIsExporting(true);
+    setExportStatus("Rendering export...");
+    try {
+      const transport = transportRef.current;
+      const loopParams = getLoopParams(activeLoopBars, activeStartBarIndex, LOCKED_STEPS_PER_BAR);
+      const stepsPerLoop = transport?.totalSteps ?? loopParams.totalSteps;
+      const baseTotalSteps = transport?.baseTotalSteps ?? loopParams.baseTotalSteps;
+      const baseStepDuration = transport?.baseStepDuration ?? loopParams.baseStepDuration;
+      const playbackStepDuration =
+        transport?.playbackStepDuration ?? (60 / playbackBpm) * (4 / LOCKED_STEPS_PER_BAR);
+      const loopStartSec = transport?.loopStartSec ?? loopParams.startSec;
+      const durationSec = stepsPerLoop * playbackStepDuration;
+      const sampleRate = 44100;
+      const frameCount = Math.ceil((durationSec + 0.05) * sampleRate);
+      const channelCount = Math.max(1, fullBuffer.numberOfChannels);
+      const offline = new OfflineAudioContext(channelCount, frameCount, sampleRate);
+
+      const expanded = expandOrder(steps, baseTotalSteps);
+      for (let stepIndex = 0; stepIndex < stepsPerLoop; stepIndex += 1) {
+        const when = stepIndex * playbackStepDuration;
+        const baseStepIndex = Math.floor((stepIndex / stepsPerLoop) * baseTotalSteps);
+        const stepEvent = expanded[baseStepIndex % expanded.length];
+        const resolved = resolveStepEvent(stepEvent);
+        if (resolved.index < 0) continue;
+        const retrigCount = Math.max(1, resolved.retrig);
+        const gainScale = resolved.gain ?? 1;
+        const baseIndex = (resolved.index % baseTotalSteps + baseTotalSteps) % baseTotalSteps;
+        const offset = loopStartSec + baseIndex * baseStepDuration;
+        const subDur = playbackStepDuration / retrigCount;
+        const sliceLoop = sliceLoopsRef.current[baseIndex] ?? null;
+
+        for (let sub = 0; sub < retrigCount; sub += 1) {
+          const subStart = when + sub * subDur;
+          const subEnd = subStart + subDur;
+          const source = offline.createBufferSource();
+          const gain = offline.createGain();
+          source.buffer = fullBuffer;
+          source.connect(gain);
+          gain.connect(offline.destination);
+          if (gaplessEnabled) {
+            const fadeOut = Math.min(0.008, subDur * 0.25);
+            gain.gain.setValueAtTime(gainScale, subStart);
+            if (fadeOut > 0) {
+              gain.gain.setValueAtTime(gainScale, subEnd - fadeOut);
+              gain.gain.linearRampToValueAtTime(0, subEnd);
+            }
+          } else {
+            gain.gain.setValueAtTime(gainScale, subStart);
+          }
+          if (sliceLoop) {
+            source.loop = true;
+            source.loopStart = offset + sliceLoop.start;
+            source.loopEnd = offset + sliceLoop.end;
+          } else if (subDur > baseStepDuration + 0.0001) {
+            const loopEnd = Math.min(fullBuffer.duration, offset + baseStepDuration);
+            if (loopEnd > offset + 0.0005) {
+              source.loop = true;
+              source.loopStart = offset;
+              source.loopEnd = loopEnd;
+            }
+          }
+          source.start(subStart, offset, subDur);
+        }
+      }
+
+      const rendered = await offline.startRendering();
+      const wavBuffer = encodeWav16(rendered, normalizeExport);
+      const blob = new Blob([wavBuffer], { type: "audio/wav" });
+      const url = URL.createObjectURL(blob);
+      const exportName = `AmenGrid_${pattern.name.replace(/\\s+/g, "-")}_${activeLoopBars}bar_${playbackBpm}bpm.wav`;
+      setExportsList((prev) => [
+        {
+          id: crypto.randomUUID(),
+          name: exportName,
+          url,
+          createdAt: Date.now(),
+          durationSec,
+          sizeBytes: blob.size,
+          normalized: normalizeExport,
+          bars: activeLoopBars,
+          bpm: playbackBpm,
+          stepsPerBar: LOCKED_STEPS_PER_BAR,
+          patternName: pattern.name
+        },
+        ...prev
+      ]);
+      setExportStatus("Export ready.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      setExportStatus(`Export failed: ${message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const stopExportPlayback = () => {
+    if (exportPlaybackRef.current.source) {
+      exportPlaybackRef.current.source.stop();
+      exportPlaybackRef.current.source.disconnect();
+    }
+    if (exportPlaybackRef.current.gainNode) {
+      exportPlaybackRef.current.gainNode.disconnect();
+    }
+    exportPlaybackRef.current = { source: null, gainNode: null, buffer: null };
+    setPlayingExportId(null);
+  };
+
+  const playExport = async (id: string, url: string) => {
+    if (playingExportId === id) {
+      stopExportPlayback();
+      return;
+    }
+    if (playingExportId) {
+      stopExportPlayback();
+    }
+    try {
+      if (!audioRef.current.ctx) {
+        audioRef.current.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioRef.current.ctx;
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(arrayBuffer);
+      const source = ctx.createBufferSource();
+      const gainNode = ctx.createGain();
+      source.buffer = buffer;
+      gainNode.gain.value = 1;
+      source.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      exportPlaybackRef.current = { source, gainNode, buffer };
+      source.start(0);
+      setPlayingExportId(id);
+      source.onended = () => {
+        setPlayingExportId(null);
+        exportPlaybackRef.current = { source: null, gainNode: null, buffer: null };
+      };
+    } catch (error) {
+      console.error("Error playing export:", error);
+      setPlayingExportId(null);
+    }
+  };
+
+  const removeExport = (id: string) => {
+    if (playingExportId === id) {
+      stopExportPlayback();
+    }
+    setExportsList((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      const removed = prev.find((item) => item.id === id);
+      if (removed) {
+        URL.revokeObjectURL(removed.url);
+      }
+      return next;
+    });
   };
 
   return (
@@ -1543,16 +2118,8 @@ export default function Home() {
               </div>
               <div>
                 <label htmlFor="slice-resolution">Slice resolution</label>
-                <select
-                  id="slice-resolution"
-                  value={stepsPerBar}
-                  onChange={(event) => applyStepsPerBar(Number(event.target.value))}
-                >
-                  {[8, 16, 32].map((steps) => (
-                    <option key={steps} value={steps}>
-                      {steps} / bar
-                    </option>
-                  ))}
+                <select id="slice-resolution" value={16} disabled>
+                  <option value={16}>16 / bar</option>
                 </select>
               </div>
             </div>
@@ -1741,6 +2308,75 @@ export default function Home() {
                     />
                     Gapless mode
                   </label>
+                </div>
+              )}
+            </div>
+            <div className="exports-panel">
+              <div className="exports-header">
+                <div>
+                  <h3>Exports</h3>
+                  <p>Render the current loop and keep the WAVs here.</p>
+                </div>
+                <button className="primary" onClick={renderExport} disabled={isExporting || !selectedLoop}>
+                  {isExporting ? "Rendering..." : "Render Export"}
+                </button>
+              </div>
+              <div className="exports-controls">
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={normalizeExport}
+                    onChange={(event) => setNormalizeExport(event.target.checked)}
+                  />
+                  Normalize output
+                </label>
+                {exportStatus && <span className="status">{exportStatus}</span>}
+              </div>
+              {exportsList.length === 0 ? (
+                <p className="exports-empty">No exports yet.</p>
+              ) : (
+                <div className="exports-list">
+                  {exportsList.map((item) => (
+                    <div key={item.id} className="export-item">
+                      <div>
+                        <h4>{item.name}</h4>
+                        <div className="export-meta">
+                          <span>{formatDuration(item.durationSec)}</span>
+                          <span>{formatSize(item.sizeBytes)}</span>
+                          <span>{item.bars} bars</span>
+                          <span>{item.bpm} bpm</span>
+                          <span>{item.stepsPerBar} steps/bar</span>
+                          <span>{item.patternName}</span>
+                          {item.normalized && <span>normalized</span>}
+                        </div>
+                      </div>
+                      <div className="export-actions">
+                        <button
+                          type="button"
+                          className={`control-button play ${playingExportId === item.id ? "stop" : "start"}`}
+                          onClick={() => playExport(item.id, item.url)}
+                          aria-label={playingExportId === item.id ? "Stop" : "Play"}
+                          title={playingExportId === item.id ? "Stop" : "Play"}
+                        >
+                          {playingExportId === item.id ? (
+                            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                              <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
+                            </svg>
+                          ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M7 5l12 7-12 7V5z" fill="currentColor" />
+                            </svg>
+                          )}
+                        </button>
+                        <a className="text-button" href={item.url} download={item.name}>
+                          Download
+                        </a>
+                        <button type="button" className="text-button" onClick={() => removeExport(item.id)}>
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

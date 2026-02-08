@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Express, Request, Response, NextFunction } from "express";
 import { resolveConvertedPath, resolveSlicesDir, resolvePatternsPath } from "../lib/storage.js";
-import { sliceLoopToWavs } from "../lib/slicing.js";
+import { sliceLoopToWavs, type LoopSelection } from "../lib/slicing.js";
 import { buildPatterns } from "../lib/patterns.js";
 
 const isValidId = (id: string) => /^[a-f0-9-]{16,}$/i.test(id);
@@ -87,8 +87,14 @@ export const registerSliceRoutes = (app: Express) => {
       const outputDir = resolveSlicesDir(id, loopKey);
       const patternsPath = resolvePatternsPath(id, loopKey);
 
-      const sliceResult = sliceLoopToWavs(wavPath, resolvedLoop, subdivision, outputDir);
-      const patterns = buildPatterns(sliceResult.count, resolvedLoop, subdivision);
+      // Extract BPM and beatsPerBar from request, or use defaults
+      const requestBpm = body.bpm as number | undefined;
+      const requestBeatsPerBar = body.beatsPerBar as number | undefined;
+      
+      // Pass to slicing function with BPM parameters
+      const loopForSlicing = resolvedLoop as LoopSelection;
+      const sliceResult = sliceLoopToWavs(wavPath, loopForSlicing, subdivision, outputDir, requestBpm || 0, requestBeatsPerBar || 4);
+      const patterns = buildPatterns(sliceResult.count, loopForSlicing, subdivision);
       fs.mkdirSync(path.dirname(patternsPath), { recursive: true });
       fs.writeFileSync(patternsPath, JSON.stringify(patterns, null, 2), "utf-8");
 

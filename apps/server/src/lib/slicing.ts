@@ -52,7 +52,9 @@ export const sliceLoopToWavs = (
   wavPath: string,
   loop: LoopSelection,
   subdivision: number,
-  outputDir: string
+  outputDir: string,
+  bpm: number = 0,
+  beatsPerBar: number = 4
 ): SliceResult => {
   const info = readWavInfo(wavPath);
   if (info.bitsPerSample !== 16) {
@@ -65,7 +67,15 @@ export const sliceLoopToWavs = (
   }
 
   const sliceCount = Math.max(1, Math.round(loop.bars * subdivision));
-  const sliceDurationSec = loopDurationSec / sliceCount;
+  
+  // Calculate step duration based on BPM and subdivision
+  // Step duration = (60 / BPM) * (4 / subdivision) seconds per step
+  let sliceDurationSec = loopDurationSec / sliceCount;
+  if (bpm > 0) {
+    const barDurationSec = (60 / bpm) * beatsPerBar;
+    const stepDurationSec = barDurationSec / subdivision;
+    sliceDurationSec = stepDurationSec;
+  }
 
   fs.mkdirSync(outputDir, { recursive: true });
 
