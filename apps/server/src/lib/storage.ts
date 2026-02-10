@@ -13,7 +13,7 @@ export const validateStoragePath = (targetPath: string, baseDir: string): string
   return resolved;
 };
 
-export const STORAGE_DIR = path.resolve(process.cwd(), "storage");
+export const STORAGE_DIR = process.env.STORAGE_DIR || path.resolve(process.cwd(), "storage");
 export const ORIGINAL_DIR = path.join(STORAGE_DIR, "original");
 export const CONVERTED_DIR = path.join(STORAGE_DIR, "converted");
 export const ANALYSIS_DIR = path.join(STORAGE_DIR, "analysis");
@@ -63,6 +63,6 @@ export const resolvePatternsPath = (id: string, loopKey: string) => {
 };
 
 export const toPublicPath = (filePath: string) => {
-  const relative = path.relative(process.cwd(), filePath);
-  return relative.split(path.sep).join("/");
+  const relative = path.relative(STORAGE_DIR, filePath);
+  return ["storage", ...relative.split(path.sep)].join("/");
 };

@@ -10,6 +10,7 @@ import {
   ensureStorageDirs,
   generateId,
   ORIGINAL_DIR,
+  STORAGE_DIR,
   resolveConvertedPath,
   resolveOriginalPath,
   toPublicPath
@@ -59,7 +60,7 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: "1mb" }));
-app.use("/storage", express.static(path.resolve(process.cwd(), "storage")));
+app.use("/storage", express.static(STORAGE_DIR));
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
