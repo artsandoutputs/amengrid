@@ -10,7 +10,7 @@ const ANALYSIS_VERSION = 2;
 export const registerAnalyzeRoutes = (app: Express) => {
   app.post(["/api/analyze", "/analyze"], async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const id = req.body?.id;
+      const id = req.body?.id ?? req.body?.uploadId;
       if (!id || typeof id !== "string" || !isValidId(id)) {
         res.status(400).json({ error: "Invalid or missing id." });
         return;
