@@ -573,9 +573,9 @@ export default function Page() {
     }
 
     const stepsPerBar = LOCKED_STEPS_PER_BAR;
-    const phraseBars = getPatternPhraseBars(pattern);
-    const totalSteps = getPatternTotalSteps(pattern);
-    const baseTotalSteps = BASE_STEPS_PER_BAR * phraseBars;
+    const phraseBars = Math.max(0.25, selectedLoop.bars);
+    const baseTotalSteps = Math.max(1, Math.round(stepsPerBar * phraseBars));
+    const totalSteps = baseTotalSteps;
 
     const loopDurationSec = selectedLoop.endSec - selectedLoop.startSec;
     const baseStepDuration = loopDurationSec / baseTotalSteps;
