@@ -30,8 +30,10 @@ import { registerSliceRoutes } from "./routes/slice.js";
 // 1. Use dynamic PORT provided by Render, fallback to 3001 locally
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 
-// 2. Configure CORS to allow your deployed frontend
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3000";
+// 2. Configure CORS to allow your deployed frontend(s)
+const DEFAULT_ORIGINS = ["http://localhost:3000"];
+const configuredOrigins = (process.env.CORS_ORIGIN || "").split(",").map((origin) => origin.trim()).filter(Boolean);
+const allowedOrigins = [...new Set([...DEFAULT_ORIGINS, ...configuredOrigins])];
 
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
 
@@ -40,7 +42,17 @@ ensureStorageDirs();
 const app = express();
 
 app.use(cors({
-  origin: CORS_ORIGIN,
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true); // allow server-to-server requests that lack Origin
+      return;
+    }
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error("Origin not allowed"));
+  },
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type"]
