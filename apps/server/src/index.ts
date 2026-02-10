@@ -36,6 +36,7 @@ const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
 const DEFAULT_ORIGINS = ["http://localhost:3000"];
 const configuredOrigins = (process.env.CORS_ORIGIN || "").split(",").map((origin) => origin.trim()).filter(Boolean);
 const allowedOrigins = [...new Set([...DEFAULT_ORIGINS, ...configuredOrigins])];
+const isVercelPreview = (origin: string) => /^https:\/\/.+\.vercel\.app$/i.test(origin);
 
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
 
@@ -49,7 +50,7 @@ app.use(cors({
       callback(null, true); // allow server-to-server requests that lack Origin
       return;
     }
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin) || isVercelPreview(origin)) {
       callback(null, true);
       return;
     }
