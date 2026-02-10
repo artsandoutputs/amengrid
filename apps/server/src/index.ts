@@ -5,8 +5,11 @@ import fs from "node:fs";
 import cors from "cors";
 import { buildFfmpegArgs, runFfmpeg } from "./lib/ffmpeg.js";
 import {
+  ANALYSIS_DIR,
+  CONVERTED_DIR,
   ensureStorageDirs,
   generateId,
+  ORIGINAL_DIR,
   resolveConvertedPath,
   resolveOriginalPath,
   toPublicPath
@@ -48,7 +51,7 @@ app.use("/storage", express.static(path.resolve(process.cwd(), "storage")));
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, "storage/originals");
+    cb(null, ORIGINAL_DIR);
   },
   filename: (_req, file, cb) => {
     const id = generateId();
