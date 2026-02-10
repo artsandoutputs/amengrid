@@ -19,7 +19,10 @@ const supabaseClient =
 const DEFAULT_API_BASE_URL = "https://sliceloop.api.amengrid.com";
 const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
 const apiBaseUrl = (rawApiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
-const buildApiUrl = (pathSegment: string) => `${apiBaseUrl}/${pathSegment.replace(/^\/+/, "")}`;
+const buildApiUrl = (pathSegment: string) => {
+  if (/^https?:\/\//i.test(pathSegment)) return pathSegment;
+  return `${apiBaseUrl}/${pathSegment.replace(/^\/+/, "")}`;
+};
 
 const getPatternPhraseBars = (pattern: Pattern) => {
   return Math.max(1, Math.round(pattern.steps.length / BASE_STEPS_PER_BAR));
@@ -469,7 +472,10 @@ export default function Page() {
       const res = await fetch(buildApiUrl("analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uploadId: uploadedId }),
+        body: JSON.stringify({
+          uploadId: uploadedId,
+          convertedUrl: convertedPath ?? undefined
+        }),
       });
 
       if (!res.ok) {

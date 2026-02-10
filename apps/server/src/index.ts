@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import cors from "cors";
 import { buildFfmpegArgs, runFfmpeg } from "./lib/ffmpeg.js";
+import { isSupabaseConfigured, uploadFileToSupabase } from "./lib/remoteStorage.js";
 import {
   ANALYSIS_DIR,
   CONVERTED_DIR,
@@ -92,16 +93,34 @@ app.post("/upload", upload.single("audio"), async (req, res, next) => {
     const args = buildFfmpegArgs(originalPath, convertedPath);
     await runFfmpeg(args);
 
+    let originalPublicPath = toPublicPath(originalPath);
+    let convertedPublicPath = toPublicPath(convertedPath);
+
+    if (isSupabaseConfigured()) {
+      const originalRemotePath = `original/${req.file.filename}`;
+      const convertedRemotePath = `converted/${id}.wav`;
+      originalPublicPath = await uploadFileToSupabase(
+        originalPath,
+        originalRemotePath,
+        req.file.mimetype
+      );
+      convertedPublicPath = await uploadFileToSupabase(
+        convertedPath,
+        convertedRemotePath,
+        "audio/wav"
+      );
+    }
+
     res.json({
       id,
       source: "upload",
       original: {
-        path: toPublicPath(originalPath),
+        path: originalPublicPath,
         mime: req.file.mimetype,
         size: req.file.size
       },
       converted: {
-        path: toPublicPath(convertedPath),
+        path: convertedPublicPath,
         format: "wav",
         sampleRate: 44100,
         bitDepth: 16,
