@@ -362,6 +362,7 @@ export default function Page() {
   const [activeFillId, setActiveFillId] = useState<string | null>(null);
   const [playbackBpm, setPlaybackBpm] = useState<number>(120);
   const [queuedPlaybackBpm, setQueuedPlaybackBpm] = useState<number | null>(null);
+  const [tempoMultiplier, setTempoMultiplier] = useState<number>(1);
   const [gaplessEnabled, setGaplessEnabled] = useState(false);
   const [exportsList, setExportsList] = useState<ExportItem[]>([]);
   const [isExporting, setIsExporting] = useState(false);
@@ -379,7 +380,7 @@ export default function Page() {
   const exportPlayerRef = useRef<AudioBufferSourceNode | null>(null);
 
   const tempoPresets = [60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180];
-  const clampTempo = (tempo: number) => clamp(tempo, 40, 200);
+  const clampTempo = (tempo: number) => clamp(tempo, 40, 300);
 
   useEffect(() => {
     const accepted = localStorage.getItem(DISCLAIMER_KEY);
@@ -419,22 +420,22 @@ export default function Page() {
       return;
     }
     const downbeatSec = analysisData.analysis.downbeat0Sec ?? 0;
-    const secondsPerBar = (60 / bpm) * 4;
+    const secondsPerBar = (60 / (bpm * tempoMultiplier)) * 4;
     const loopDurationSec = loopBars * secondsPerBar;
     const startSec = downbeatSec + startBarIndex * secondsPerBar;
     const endSec = Math.min(analysisData.analysis.durationSec, startSec + loopDurationSec);
     setSelectedLoop({ startSec, endSec, bars: loopBars });
-  }, [analysisData, startBarIndex, loopBars]);
+  }, [analysisData, startBarIndex, loopBars, tempoMultiplier]);
 
   useEffect(() => {
     if (!analysisData) return;
     const bpm = analysisData.analysis.bpm;
     if (typeof bpm !== "number" || Number.isNaN(bpm)) return;
     if (isPlayingRef.current) return;
-    const nextTempo = clampTempo(Math.round(bpm));
+    const nextTempo = clampTempo(Math.round(bpm * tempoMultiplier));
     setPlaybackBpm(nextTempo);
     setQueuedPlaybackBpm(null);
-  }, [analysisData]);
+  }, [analysisData, tempoMultiplier]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1225,6 +1226,29 @@ export default function Page() {
                       <span className="tempo-value">{playbackBpm}</span>
                       <button className="control-button loop" onClick={() => requestTempoChange(1)}>
                         +
+                      </button>
+                    </div>
+                    <div className="tempo-buttons">
+                      <button
+                        className={`control-button loop ${tempoMultiplier === 0.5 ? "active" : ""}`}
+                        onClick={() => setTempoMultiplier(0.5)}
+                        type="button"
+                      >
+                        0.5x
+                      </button>
+                      <button
+                        className={`control-button loop ${tempoMultiplier === 1 ? "active" : ""}`}
+                        onClick={() => setTempoMultiplier(1)}
+                        type="button"
+                      >
+                        1x
+                      </button>
+                      <button
+                        className={`control-button loop ${tempoMultiplier === 2 ? "active" : ""}`}
+                        onClick={() => setTempoMultiplier(2)}
+                        type="button"
+                      >
+                        2x
                       </button>
                     </div>
                     <select

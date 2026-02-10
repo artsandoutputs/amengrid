@@ -599,6 +599,12 @@ button:disabled {
   color: var(--control-loop-text);
 }
 
+.control-button.loop.active {
+  background: var(--control-play-stop-bg);
+  border-color: var(--control-play-stop-border);
+  color: var(--control-play-stop-text);
+}
+
 .control-button.play.start {
   background: var(--control-play-start-bg);
   border-color: var(--control-play-start-border);
