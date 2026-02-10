@@ -4,23 +4,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import {
   PATTERN_PACKS,
-  ROLE_BASE,
-  ROLE_GHOST,
-  ROLE_HAT,
-  ROLE_KICK,
-  ROLE_SNARE,
+  type Pattern,
   type PatternPack,
-  type StepEvent,
-  resolveFillOffsets
+  type StepEvent
 } from "./patternPacks";
 import { LoopPicker } from "./components/LoopPicker";
 import { Waveform } from "./components/Waveform";
 
-// Initialize Supabase
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseClient =
+  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const DEFAULT_API_BASE_URL = "https://sliceloop.api.amengrid.com";
+const rawApiBaseUrl = process.env.NEXT_PUBLIC_API_URL;
+const apiBaseUrl = (rawApiBaseUrl ?? DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+const buildApiUrl = (pathSegment: string) => `${apiBaseUrl}/${pathSegment.replace(/^\/+/, "")}`;
+
+const getPatternPhraseBars = (pattern: Pattern) => {
+  return Math.max(1, Math.round(pattern.steps.length / BASE_STEPS_PER_BAR));
+};
+
+const getPatternTotalSteps = (pattern: Pattern) => pattern.steps.length;
 
 const DISCLAIMER_KEY = "amengrid_disclaimer_accepted";
 
@@ -307,22 +312,31 @@ const formatSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-// Sync export metadata to Supabase
+// Sync export metadata to Supabase (skip if config is missing)
 const syncExportToCloud = async (item: ExportItem) => {
-  const { error } = await supabase
-    .from('exports')
-    .insert([{
-      id: item.id,
-      name: item.name,
-      bpm: item.bpm,
-      pattern_name: item.patternName, // correctly maps camelCase to snake_case
-      duration_sec: item.durationSec,
-      bars: item.bars,
-      size_bytes: item.sizeBytes,
-      created_at: new Date(item.createdAt).toISOString()
-    }]);
+  if (!supabaseClient) {
+    console.warn("Supabase client not configured; skipping export sync.");
+    return;
+  }
 
-  if (error) console.error("Supabase Sync Error:", error.message);
+  const { error } = await supabaseClient
+    .from("exports")
+    .insert([
+      {
+        id: item.id,
+        name: item.name,
+        bpm: item.bpm,
+        pattern_name: item.patternName,
+        duration_sec: item.durationSec,
+        bars: item.bars,
+        size_bytes: item.sizeBytes,
+        created_at: new Date(item.createdAt).toISOString(),
+      },
+    ]);
+
+  if (error) {
+    console.error("Supabase Sync Error:", error.message);
+  }
 };
 
 export default function Page() {
@@ -333,6 +347,8 @@ export default function Page() {
   const [analysisData, setAnalysisData] = useState<AnalysisResponse | null>(null);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [selectedLoop, setSelectedLoop] = useState<LoopSelection | null>(null);
+  const [loopBars, setLoopBars] = useState<LoopBars>(1);
+  const [startBarIndex, setStartBarIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeStep, setActiveStep] = useState(-1);
   const [selectedPatternPack, setSelectedPatternPack] = useState<PatternPack>(PATTERN_PACKS[0]);
@@ -374,6 +390,39 @@ export default function Page() {
     setDisclaimerAccepted(true);
   };
 
+  useEffect(() => {
+    if (!analysisData) {
+      setStartBarIndex(0);
+      return;
+    }
+    const bpm = analysisData.analysis.bpm;
+    if (!bpm) return;
+    const downbeatSec = analysisData.analysis.downbeat0Sec ?? 0;
+    const durationSec = analysisData.analysis.durationSec;
+    const secondsPerBar = (60 / bpm) * 4;
+    const availableBars = Math.max(1, Math.floor((durationSec - downbeatSec) / secondsPerBar));
+    const maxStartBar = Math.max(0, Math.floor(availableBars - loopBars));
+    setStartBarIndex((prev) => (prev > maxStartBar ? maxStartBar : prev));
+  }, [analysisData, loopBars]);
+
+  useEffect(() => {
+    if (!analysisData) {
+      setSelectedLoop(null);
+      return;
+    }
+    const bpm = analysisData.analysis.bpm;
+    if (!bpm) {
+      setSelectedLoop(null);
+      return;
+    }
+    const downbeatSec = analysisData.analysis.downbeat0Sec ?? 0;
+    const secondsPerBar = (60 / bpm) * 4;
+    const loopDurationSec = loopBars * secondsPerBar;
+    const startSec = downbeatSec + startBarIndex * secondsPerBar;
+    const endSec = Math.min(analysisData.analysis.durationSec, startSec + loopDurationSec);
+    setSelectedLoop({ startSec, endSec, bars: loopBars });
+  }, [analysisData, startBarIndex, loopBars]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -394,7 +443,7 @@ export default function Page() {
       const formData = new FormData();
       formData.append("audio", audioFile);
 
-      const res = await fetch("https://sliceloop.api.amengrid.com/upload", {
+      const res = await fetch(buildApiUrl("upload"), {
         method: "POST",
         body: formData,
       });
@@ -417,7 +466,7 @@ export default function Page() {
     if (!uploadedId) return;
     try {
       setResponse("Analyzing...");
-      const res = await fetch("https://sliceloop.api.amengrid.com/analyze", {
+      const res = await fetch(buildApiUrl("analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ uploadId: uploadedId }),
@@ -440,7 +489,7 @@ export default function Page() {
     if (!convertedPath) return;
     try {
       setResponse("Loading audio buffer...");
-      const url = `https://sliceloop.api.amengrid.com${convertedPath}`;
+      const url = buildApiUrl(convertedPath);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Failed to fetch audio: ${res.status}`);
 
@@ -456,10 +505,25 @@ export default function Page() {
     }
   };
 
-  const handleLoopSelect = (loop: LoopSelection) => {
-    setSelectedLoop(loop);
+  const handleStartBarChange = (index: number) => {
+    setStartBarIndex(Math.max(0, index));
     if (isPlaying) {
       stop();
+    }
+  };
+
+  const handleLoopBarsChange = (bars: number) => {
+    setLoopBars(bars as LoopBars);
+    if (isPlaying) {
+      stop();
+    }
+  };
+
+  const toggleLoopPlayback = () => {
+    if (isPlaying) {
+      stop();
+    } else if (selectedMainPattern) {
+      startMain(selectedMainPattern);
     }
   };
 
@@ -488,9 +552,9 @@ export default function Page() {
       context.resume();
     }
 
-    const stepsPerBar = pattern.stepsPerBar ?? LOCKED_STEPS_PER_BAR;
-    const phraseBars = pattern.bars ?? 1;
-    const totalSteps = stepsPerBar * phraseBars;
+    const stepsPerBar = LOCKED_STEPS_PER_BAR;
+    const phraseBars = getPatternPhraseBars(pattern);
+    const totalSteps = getPatternTotalSteps(pattern);
     const baseTotalSteps = BASE_STEPS_PER_BAR * phraseBars;
 
     const loopDurationSec = selectedLoop.endSec - selectedLoop.startSec;
@@ -508,7 +572,7 @@ export default function Page() {
       baseTotalSteps,
       phraseBars,
       activeMainId: patternId,
-      activeMainSteps: pattern.main,
+      activeMainSteps: pattern.steps,
       mainBeforeFillId: null,
       queuedMainId: null,
       queuedStepsPerBar: null,
@@ -563,7 +627,7 @@ export default function Page() {
                 stepTime,
                 t.baseTotalSteps,
                 resolved.retrig,
-                resolved.gain
+                resolved.gain ?? 1
               );
             }
             t.fillStepIndex += 1;
@@ -583,7 +647,7 @@ export default function Page() {
               t.activeMainId = t.mainBeforeFillId;
               const restoredPattern = selectedPatternPack.mains.find((p) => p.id === t.mainBeforeFillId);
               if (restoredPattern) {
-                t.activeMainSteps = restoredPattern.main;
+                t.activeMainSteps = restoredPattern.steps;
               }
               t.mainBeforeFillId = null;
               setActiveMainId(t.activeMainId);
@@ -605,7 +669,7 @@ export default function Page() {
                 stepTime,
                 t.baseTotalSteps,
                 resolved.retrig,
-                resolved.gain
+                resolved.gain ?? 1
               );
             }
           }
@@ -616,7 +680,7 @@ export default function Page() {
             const nextPattern = selectedPatternPack.mains.find((p) => p.id === t.queuedMainId);
             if (nextPattern) {
               t.activeMainId = t.queuedMainId;
-              t.activeMainSteps = nextPattern.main;
+              t.activeMainSteps = nextPattern.steps;
               t.stepsPerBar = t.queuedStepsPerBar;
               t.totalSteps = t.stepsPerBar * t.phraseBars;
               t.playbackStepDuration = (60 / t.playbackBpm) * (BASE_STEPS_PER_BAR / t.stepsPerBar);
@@ -640,9 +704,9 @@ export default function Page() {
             if (fillPattern) {
               t.mainBeforeFillId = t.activeMainId;
               t.activeFillId = t.queuedFillId;
-              t.activeFillSteps = fillPattern.fill;
+              t.activeFillSteps = fillPattern.steps;
               t.fillStartStep = t.nextStep;
-              t.fillStepsRemaining = fillPattern.fill.length;
+              t.fillStepsRemaining = fillPattern.steps.length;
               t.fillUntilStep = t.nextStep + t.fillStepsRemaining;
               t.fillStepIndex = 0;
               setActiveFillId(t.activeFillId);
@@ -690,7 +754,7 @@ export default function Page() {
     setQueuedMainId(patternId);
     if (transportRef.current) {
       transportRef.current.queuedMainId = patternId;
-      transportRef.current.queuedStepsPerBar = pattern.stepsPerBar ?? LOCKED_STEPS_PER_BAR;
+      transportRef.current.queuedStepsPerBar = LOCKED_STEPS_PER_BAR;
     }
   };
 
@@ -723,10 +787,10 @@ export default function Page() {
     const pattern = selectedPatternPack.mains.find((p) => p.id === activeMainId);
     if (!pattern) return slicePeaks;
 
-    const stepsPerBar = pattern.stepsPerBar ?? LOCKED_STEPS_PER_BAR;
-    const phraseBars = pattern.bars ?? 1;
-    const totalSteps = stepsPerBar * phraseBars;
-    const order = expandOrderToIndices(pattern.main, totalSteps);
+    const stepsPerBar = LOCKED_STEPS_PER_BAR;
+    const phraseBars = getPatternPhraseBars(pattern);
+    const totalSteps = getPatternTotalSteps(pattern);
+    const order = expandOrderToIndices(pattern.steps, totalSteps);
     return reorderSlicePeaks(slicePeaks, order, POINTS_PER_SLICE);
   }, [slicePeaks, activeMainId, selectedPatternPack]);
 
@@ -744,9 +808,9 @@ export default function Page() {
     setExportStatus("Rendering...");
 
     try {
-      const stepsPerBar = pattern.stepsPerBar ?? LOCKED_STEPS_PER_BAR;
-      const phraseBars = pattern.bars ?? 1;
-      const totalSteps = stepsPerBar * phraseBars;
+      const stepsPerBar = LOCKED_STEPS_PER_BAR;
+      const phraseBars = getPatternPhraseBars(pattern);
+      const totalSteps = getPatternTotalSteps(pattern);
       const baseTotalSteps = BASE_STEPS_PER_BAR * phraseBars;
 
       const loopDurationSec = selectedLoop.endSec - selectedLoop.startSec;
@@ -761,13 +825,14 @@ export default function Page() {
       );
 
       for (let step = 0; step < totalSteps; step += 1) {
-        const mainEvent = pattern.main[step % pattern.main.length];
+        const mainEvent = pattern.steps[step % pattern.steps.length];
         const resolved = resolveStepEvent(mainEvent);
         if (resolved.index >= 0) {
           const barIndex = Math.floor(step / stepsPerBar);
           const barOffset = barIndex * BASE_STEPS_PER_BAR;
           const sliceIndex = resolved.index + barOffset;
           const stepTime = step * playbackStepDuration;
+          const gain = resolved.gain ?? 1;
 
           const sampleRate = audioBuffer.sampleRate;
           const startSample = Math.floor(selectedLoop.startSec * sampleRate);
@@ -783,7 +848,7 @@ export default function Page() {
           source.buffer = audioBuffer;
 
           const gainNode = offlineContext.createGain();
-          gainNode.gain.value = resolved.gain;
+          gainNode.gain.value = gain;
           source.connect(gainNode);
           gainNode.connect(offlineContext.destination);
 
@@ -999,19 +1064,31 @@ export default function Page() {
           </button>
         </div>
 
-        {audioBuffer && analysisData && (
+        {analysisData && (
           <LoopPicker
-            audioBuffer={audioBuffer}
-            analysisData={analysisData}
-            onLoopSelect={handleLoopSelect}
-            selectedLoop={selectedLoop}
+            peaks={peaks}
+            durationSec={analysisData.analysis.durationSec}
+            bpm={analysisData.analysis.bpm}
+            downbeat0Sec={analysisData.analysis.downbeat0Sec}
+            loopBars={loopBars}
+            startBarIndex={startBarIndex}
+            onStartBarChange={handleStartBarChange}
+            onLoopBarsChange={handleLoopBarsChange}
+            onPlayToggle={toggleLoopPlayback}
+            isPlaying={isPlaying}
           />
         )}
 
         {selectedLoop && (
           <section className="sequencer">
             <div className="waveform-container">
-              <Waveform peaks={displayPeaks} activeStep={activeStep} totalSteps={LOCKED_STEPS_PER_BAR} />
+              <Waveform
+                peaks={displayPeaks}
+                totalSteps={LOCKED_STEPS_PER_BAR}
+                isActive={isPlaying}
+                progress={isPlaying ? activeStep / Math.max(1, LOCKED_STEPS_PER_BAR) : null}
+                highlightStep={activeStep >= 0 ? activeStep : null}
+              />
             </div>
 
             <div className="transport-controls">

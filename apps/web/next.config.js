@@ -1,15 +1,17 @@
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(/\/+$/, "");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
 
-  // 1. Tell Next.js to ignore TypeScript errors during production builds
+  // 1. Tell Next.js to enforce TypeScript errors during production builds
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
 
-  // 2. Tell Next.js to ignore ESLint errors during production builds
+  // 2. Tell Next.js to enforce ESLint errors during production builds
   eslint: {
-    ignoreDuringBuilds: true,
+    ignoreDuringBuilds: false,
   },
 
   // 3. Keep your existing API and Storage rewrites
@@ -17,11 +19,11 @@ const nextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:4000/api/:path*",
+        destination: `${API_BASE_URL}/api/:path*`,
       },
       {
         source: "/storage/:path*",
-        destination: "http://localhost:4000/storage/:path*",
+        destination: `${API_BASE_URL}/storage/:path*`,
       },
     ];
   },

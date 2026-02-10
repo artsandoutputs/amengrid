@@ -23,15 +23,19 @@ import {
 import { registerAnalyzeRoutes } from "./routes/analyze.js";
 import { registerSliceRoutes } from "./routes/slice.js";
 
-const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
-const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
+// --- RENDER COMPATIBILITY UPDATES ---
+// 1. Use dynamic PORT provided by Render, fallback to 3001 locally
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3001;
+
+// 2. Configure CORS to allow your deployed frontend
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:3000";
+
+const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024;
 
 ensureStorageDirs();
 
 const app = express();
 
-// Security: CORS configuration
 app.use(cors({
   origin: CORS_ORIGIN,
   credentials: true,
@@ -43,15 +47,13 @@ app.use(express.json({ limit: "1mb" }));
 app.use("/storage", express.static(path.resolve(process.cwd(), "storage")));
 
 const storage = multer.diskStorage({
-  destination: (req, _file, cb) => {
-    cb(null, path.resolve(process.cwd(), "storage", "original"));
+  destination: (_req, _file, cb) => {
+    cb(null, "storage/originals");
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     const id = generateId();
-    const originalPath = resolveOriginalPath(id, file.originalname, file.mimetype);
-    req.uploadId = id;
-    req.uploadOriginalPath = originalPath;
-    cb(null, path.basename(originalPath));
+    const ext = path.extname(file.originalname) || ".bin";
+    cb(null, `${id}${ext}`);
   }
 });
 
@@ -60,25 +62,15 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE_BYTES }
 });
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
-});
-
-app.post("/api/upload", upload.single("file"), async (req, res, next) => {
+app.post("/upload", upload.single("audio"), async (req, res, next) => {
   try {
     if (!req.file) {
-      res.status(400).json({ error: "No file uploaded." });
+      res.status(400).json({ error: "No file uploaded" });
       return;
     }
 
-    if (req.file.size === 0) {
-      fs.unlink(req.file.path, () => {});
-      res.status(400).json({ error: "Empty file upload." });
-      return;
-    }
-
-    const id = req.uploadId ?? generateId();
-    const originalPath = req.uploadOriginalPath ?? req.file.path;
+    const id = path.parse(req.file.filename).name;
+    const originalPath = req.file.path;
     const convertedPath = resolveConvertedPath(id);
 
     const args = buildFfmpegArgs(originalPath, convertedPath);
@@ -86,6 +78,7 @@ app.post("/api/upload", upload.single("file"), async (req, res, next) => {
 
     res.json({
       id,
+      source: "upload",
       original: {
         path: toPublicPath(originalPath),
         mime: req.file.mimetype,
@@ -104,14 +97,9 @@ app.post("/api/upload", upload.single("file"), async (req, res, next) => {
   }
 });
 
-app.post("/api/youtube", async (req, res, next) => {
+app.post("/youtube", async (req, res, next) => {
   try {
-    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-    if (!url) {
-      res.status(400).json({ error: "Missing YouTube URL." });
-      return;
-    }
-
+    const { url } = req.body;
     const normalized = validateYouTubeUrl(url);
     const metadata = await fetchYouTubeMetadata(normalized);
     guardYouTubeLimits(metadata);
@@ -161,11 +149,11 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
     res.status(400).json({ error: err.message });
     return;
   }
-
-  const message = err instanceof Error ? err.message : "Unknown error";
-  res.status(500).json({ error: message });
+  console.error("Server Error:", err);
+  res.status(500).json({ error: "Internal server error" });
 });
 
-app.listen(PORT, () => {
-  console.log(`AmenGrid server listening on http://localhost:${PORT}`);
+// 3. Bind to 0.0.0.0 as required by Render for public traffic
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server is running on http://0.0.0.0:${PORT}`);
 });
