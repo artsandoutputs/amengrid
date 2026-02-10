@@ -426,6 +426,16 @@ export default function Page() {
     setSelectedLoop({ startSec, endSec, bars: loopBars });
   }, [analysisData, startBarIndex, loopBars]);
 
+  useEffect(() => {
+    if (!analysisData) return;
+    const bpm = analysisData.analysis.bpm;
+    if (typeof bpm !== "number" || Number.isNaN(bpm)) return;
+    if (isPlayingRef.current) return;
+    const nextTempo = clampTempo(Math.round(bpm));
+    setPlaybackBpm(nextTempo);
+    setQueuedPlaybackBpm(null);
+  }, [analysisData]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
