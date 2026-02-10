@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
 
-const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
+const FFMPEG = process.env.FFMPEG_PATH || ffmpegInstaller.path || "ffmpeg";
 
 export const buildFfmpegArgs = (inputPath: string, outputPath: string) => {
   return [
