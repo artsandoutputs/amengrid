@@ -5,7 +5,8 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "node scripts/dev.mjs"
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build --workspace apps/web && npm run build --workspace apps/server"
   },
   "overrides": {
     "esbuild": "0.17.19"
