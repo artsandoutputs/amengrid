@@ -8,7 +8,7 @@ const isValidId = (id: string) => /^[a-f0-9-]{16,}$/i.test(id);
 const ANALYSIS_VERSION = 2;
 
 export const registerAnalyzeRoutes = (app: Express) => {
-  app.post("/api/analyze", async (req: Request, res: Response, next: NextFunction) => {
+  app.post(["/api/analyze", "/analyze"], async (req: Request, res: Response, next: NextFunction) => {
     try {
       const id = req.body?.id;
       if (!id || typeof id !== "string" || !isValidId(id)) {
