@@ -579,7 +579,7 @@ export default function Page() {
 
     const loopDurationSec = selectedLoop.endSec - selectedLoop.startSec;
     const baseStepDuration = loopDurationSec / baseTotalSteps;
-    const playbackStepDuration = (60 / playbackBpm) * (BASE_STEPS_PER_BAR / stepsPerBar);
+    const playbackStepDuration = (60 / playbackBpm) * (4 / stepsPerBar);
 
     const transport: TransportState = {
       startTime: context.currentTime,
@@ -703,7 +703,7 @@ export default function Page() {
               t.activeMainSteps = nextPattern.steps;
               t.stepsPerBar = t.queuedStepsPerBar;
               t.totalSteps = t.stepsPerBar * t.phraseBars;
-              t.playbackStepDuration = (60 / t.playbackBpm) * (BASE_STEPS_PER_BAR / t.stepsPerBar);
+              t.playbackStepDuration = (60 / t.playbackBpm) * (4 / t.stepsPerBar);
               setActiveMainId(t.activeMainId);
             }
             t.queuedMainId = null;
@@ -713,7 +713,7 @@ export default function Page() {
 
           if (t.queuedPlaybackBpm !== null) {
             t.playbackBpm = t.queuedPlaybackBpm;
-            t.playbackStepDuration = (60 / t.playbackBpm) * (BASE_STEPS_PER_BAR / t.stepsPerBar);
+            t.playbackStepDuration = (60 / t.playbackBpm) * (4 / t.stepsPerBar);
             setPlaybackBpm(t.playbackBpm);
             t.queuedPlaybackBpm = null;
             setQueuedPlaybackBpm(null);
@@ -835,7 +835,7 @@ export default function Page() {
 
       const loopDurationSec = selectedLoop.endSec - selectedLoop.startSec;
       const baseStepDuration = loopDurationSec / baseTotalSteps;
-      const playbackStepDuration = (60 / playbackBpm) * (BASE_STEPS_PER_BAR / stepsPerBar);
+      const playbackStepDuration = (60 / playbackBpm) * (4 / stepsPerBar);
       const totalDuration = totalSteps * playbackStepDuration;
 
       const offlineContext = new OfflineAudioContext(
