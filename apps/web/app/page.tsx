@@ -485,6 +485,9 @@ export default function Page() {
 
       const data: AnalysisResponse = await res.json();
       setAnalysisData(data);
+      if (typeof data.analysis.bpm === "number" && !Number.isNaN(data.analysis.bpm)) {
+        setPlaybackBpm(clampTempo(Math.round(data.analysis.bpm)));
+      }
       setResponse(`Analysis: ${JSON.stringify(data, null, 2)}`);
     } catch (error) {
       setResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
